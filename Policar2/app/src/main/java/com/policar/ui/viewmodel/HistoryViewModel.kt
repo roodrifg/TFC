@@ -31,17 +31,15 @@ class HistoryViewModel : ViewModel() {
     fun setUserId(userId: String) {
         if (currentUserId != userId) {
             currentUserId = userId
-            loadHistory()
         }
+        loadHistory()
     }
 
     fun loadHistory() {
-        if (currentUserId.isBlank()) return
-
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            val result = repository.fetchSessionsForPeriod(currentUserId, _uiState.value.selectedPeriod)
+            val result = repository.fetchSessionsForPeriod(period = _uiState.value.selectedPeriod)
 
             result.fold(
                 onSuccess = { sessions ->
@@ -67,7 +65,7 @@ class HistoryViewModel : ViewModel() {
     }
 
     fun selectPeriod(period: ViewPeriod) {
-        _uiState.update { it.copy(selectedPeriod = period) }
+        _uiState.update { it.copy(selectedPeriod = period, dailyStats = null) }
         loadHistory()
     }
 
@@ -125,23 +123,21 @@ class HistoryViewModel : ViewModel() {
     }
 
     fun calculateDashboardStats() {
-        if (currentUserId.isBlank()) return
-
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            val result = repository.calculateDashboardStats(currentUserId, _uiState.value.selectedPeriod)
+            val period = _uiState.value.selectedPeriod
+            val result = repository.calculateDashboardStats(period = period)
 
             result.fold(
                 onSuccess = { stats ->
-                    _uiState.update { it.copy(isLoading = false) }
+                    _uiState.update { state ->
+                        state.copy(isLoading = false, dailyStats = stats)
+                    }
                 },
                 onFailure = { error ->
                     _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = error.message
-                        )
+                        it.copy(isLoading = false, error = error.message)
                     }
                 }
             )
@@ -217,6 +213,14 @@ class HistoryViewModel : ViewModel() {
                 }
             )
         }
+    }
+
+    fun selectSession(session: TrainingSession) {
+        _uiState.update { it.copy(selectedSession = session) }
+    }
+
+    fun clearSelectedSession() {
+        _uiState.update { it.copy(selectedSession = null) }
     }
 
     fun clearError() {

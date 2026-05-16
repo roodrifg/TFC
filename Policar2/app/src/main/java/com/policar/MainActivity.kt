@@ -155,7 +155,7 @@ fun PolicarApp() {
 
                     // Solo iniciar si hay un deviceId válido
                     if (deviceId.isNotBlank()) {
-                        workoutViewModel.startWorkout(sport, deviceId)
+                        workoutViewModel.startWorkout(sport, deviceId, mode)
                     }
 
                     navController.navigate(NavRoutes.WORKOUT)

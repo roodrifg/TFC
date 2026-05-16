@@ -501,7 +501,7 @@ fun LineChart(
             data.forEachIndexed { index, value ->
                 val x = index * stepX
                 val y = size.height - 20.dp.toPx() - ((value - minValue).toFloat() / range) * heightRange
-                if (index == 0) lineTo(x, y) else quadraticBezierTo(
+                if (index == 0) lineTo(x, y) else quadraticTo(
                     x1 = (index - 1) * stepX + stepX / 2,
                     y1 = if (index > 0) {
                         size.height - 20.dp.toPx() - ((data[index - 1] - minValue).toFloat() / range) * heightRange
@@ -526,7 +526,7 @@ fun LineChart(
             data.forEachIndexed { index, value ->
                 val x = index * stepX
                 val y = size.height - 20.dp.toPx() - ((value - minValue).toFloat() / range) * heightRange
-                if (index == 0) moveTo(x, y) else quadraticBezierTo(
+                if (index == 0) moveTo(x, y) else quadraticTo(
                     x1 = (index - 1) * stepX + stepX / 2,
                     y1 = if (index > 0) {
                         size.height - 20.dp.toPx() - ((data[index - 1] - minValue).toFloat() / range) * heightRange

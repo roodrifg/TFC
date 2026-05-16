@@ -14,14 +14,22 @@ import com.policar.data.model.PadelBiomechanics
 import com.policar.data.model.RecordingStatus
 import com.policar.data.model.SesionActiva
 import com.policar.data.model.SyncState
+import com.policar.data.model.ModoGrabacion
 import com.policar.data.model.TipoDeporte
 import com.policar.data.model.WorkoutState
 import com.policar.data.model.WorkoutSummary
 import com.policar.data.model.TelemetryState
+import com.policar.data.model.calculateHRZone
 import com.policar.data.remote.SupabaseConfig
 import com.policar.sensor.PolarManagerProvider
 import io.github.jan.supabase.postgrest.from
+import java.time.Instant
 import kotlinx.coroutines.Job
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,10 +62,12 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
 
     private var timerJob: Job? = null
     private var syncJob: Job? = null
+    private var wasDisconnectedDuringWorkout = false
 
     val connectionState: StateFlow<ConnectionState> = polarManager.connectionState
     val hrValue: StateFlow<Int> = polarManager.hrValue
     val hrvStress: StateFlow<Double> = polarManager.hrvStress
+    val rmssd: StateFlow<Double> = polarManager.rmssd
     val rrIntervalMs: StateFlow<Long> = polarManager.rrIntervalMs
     val ecgSamples: StateFlow<List<Float>> = polarManager.ecgSamples
     val recordingStatus: StateFlow<RecordingStatus> = polarManager.recordingStatus
@@ -94,19 +104,75 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
                 biomechanics.value = bio
             }
         }
+        // Reiniciar streaming si el BLE reconecta durante un entrenamiento activo
+        viewModelScope.launch {
+            polarManager.connectionState.collect { state ->
+                val workout = _uiState.value
+                when {
+                    workout.isActive && (state is ConnectionState.Disconnected || state is ConnectionState.Error) -> {
+                        wasDisconnectedDuringWorkout = true
+                        Log.d(TAG, "BLE perdido durante entrenamiento activo")
+                    }
+                    workout.isActive && state is ConnectionState.Connected && wasDisconnectedDuringWorkout -> {
+                        wasDisconnectedDuringWorkout = false
+                        polarManager.restartStreaming(state.deviceId, workout.selectedSport)
+                        Log.d(TAG, "BLE reconectado — streaming reanudado sin perder datos")
+                    }
+                    state is ConnectionState.Connected -> {
+                        wasDisconnectedDuringWorkout = false
+                    }
+                }
+            }
+        }
     }
 
-    fun startWorkout(sport: TipoDeporte, deviceId: String) {
+    fun startWorkout(sport: TipoDeporte, deviceId: String, mode: ModoGrabacion = ModoGrabacion.EN_VIVO) {
+        timerJob?.cancel()
+        syncJob?.cancel()
+        heartRateHistory.clear()
+        wasDisconnectedDuringWorkout = false
+        polarManager.stopStreaming()
+
         val startTime = System.currentTimeMillis()
-        val state = SesionActiva(
-            fecha_inicio = startTime,
-            tipo_deporte = sport.name,
-            deviceId = deviceId
-        )
-        _uiState.update { it.copy(isActive = true, selectedSport = sport, deviceId = deviceId, startTime = startTime) }
+        _uiState.update { it.copy(
+            isActive = true,
+            isPaused = false,
+            selectedSport = sport,
+            deviceId = deviceId,
+            startTime = startTime,
+            elapsedSeconds = 0L,
+            isSaving = false,
+            savedSuccessfully = false,
+            syncState = SyncState.Idle,
+            savedWorkoutSummary = null,
+            errorMessage = null
+        ) }
         polarManager.startStreaming(deviceId, sport)
+        if (mode == ModoGrabacion.OFFLINE) {
+            val exId = "WK${(startTime % 100000000L).toString().take(8)}"
+            polarManager.startRecording(deviceId, exId)
+            // Grabar ACC en H10 para biomecánica sin BLE (partido real)
+            if (sport == TipoDeporte.FUTBOL) {
+                polarManager.startAccOfflineRecording(deviceId)
+            }
+            Log.d(TAG, "Grabacion interna H10 iniciada: exId=$exId")
+        }
         startTimer()
-        Log.d(TAG, "Entrenamiento iniciado: $sport en ${startTime}")
+        Log.d(TAG, "Entrenamiento iniciado: $sport modo=${mode.name} en $startTime")
+    }
+
+    fun discardWorkout() {
+        timerJob?.cancel()
+        syncJob?.cancel()
+        wasDisconnectedDuringWorkout = false
+        val deviceId = _uiState.value.deviceId
+        if (deviceId.isNotEmpty()) {
+            polarManager.stopStreaming()
+            polarManager.stopRecording(deviceId)
+        }
+        heartRateHistory.clear()
+        _uiState.value = WorkoutState()
+        Log.d(TAG, "Entrenamiento descartado")
     }
 
     fun stopWorkout() {
@@ -182,40 +248,67 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
                 val validRpe = rpe.coerceIn(0, 10)
                 val validDeviceId = deviceId.ifBlank { "H10_UNKNOWN" }
                 val sportType = normalizeSportType(state.selectedSport.name)
-                val hrSamples = if (heartRateHistory.isEmpty()) "0" else heartRateHistory.joinToString(",")
-                val bio = biomechanics.value
 
-                val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-                val startTs = dateFormat.format(Date(state.startTime))
-                val endTs = dateFormat.format(Date(System.currentTimeMillis()))
-                val hrAvg = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toInt() else 0
+                val startTs = state.startTime
+                val endTs = System.currentTimeMillis()
+                val startTsIso = Instant.ofEpochMilli(startTs).toString()
+                val endTsIso   = Instant.ofEpochMilli(endTs).toString()
+
+                val hrAvg = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toFloat() else 0f
                 val hrMax = heartRateHistory.maxOrNull() ?: 0
                 val hrMin = heartRateHistory.filter { it > 0 }.minOrNull() ?: 0
 
-                Log.d(TAG, "Preparando datos para Supabase:")
-                Log.d(TAG, "  - device_id: $validDeviceId")
-                Log.d(TAG, "  - sport_type: $sportType")
-                Log.d(TAG, "  - start_timestamp: $startTs")
-                Log.d(TAG, "  - end_timestamp: $endTs")
-                Log.d(TAG, "  - duration_seconds: ${state.elapsedSeconds}")
+                val hrSamplesJson = buildJsonArray { heartRateHistory.forEach { add(it) } }
+                val zones = calcZoneSeconds(heartRateHistory)
 
-                val bioJson = """{"carga_mecanica_g":${bio.carga_mecanica_g},"impacto_fuerza_g":${bio.impacto_fuerza_g},"rotacion_tronco_x":${bio.rotacion_tronco_x},"rotacion_tronco_y":${bio.rotacion_tronco_y},"repeticiones":${bio.repeticiones},"velocidad_concentrica_promedio":${bio.velocidad_concentrica_promedio}}"""
+                // Para FUTBOL en modo OFFLINE: intentar descargar ACC grabado en H10
+                // Permite tener biomecánica aunque el móvil estuviera lejos durante el partido
+                val offlineFutbolBio: FutbolBiomechanics? = if (state.selectedSport == TipoDeporte.FUTBOL) {
+                    try {
+                        val accSamples = polarManager.fetchOfflineAccSamples(deviceId)
+                        if (accSamples.isNotEmpty()) {
+                            Log.d(TAG, "[Sync] ACC offline: ${accSamples.size} muestras procesando...")
+                            polarManager.processOfflineAccForFutbol(accSamples)
+                        } else null
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[Sync] ACC offline no disponible, usando datos live: ${e.message}")
+                        null
+                    }
+                } else null
+
+                val futbolBioJson: JsonElement? = if (state.selectedSport == TipoDeporte.FUTBOL) {
+                    val bio = offlineFutbolBio ?: futbolBio.value
+                    SupabaseConfig.supabaseJson.encodeToJsonElement(FutbolBiomechanics.serializer(), bio)
+                } else null
+                val padelBioJson: JsonElement? = if (state.selectedSport == TipoDeporte.PADEL)
+                    SupabaseConfig.supabaseJson.encodeToJsonElement(PadelBiomechanics.serializer(), padelBio.value) else null
+                val gymBioJson: JsonElement? = if (state.selectedSport == TipoDeporte.GIMNASIO)
+                    SupabaseConfig.supabaseJson.encodeToJsonElement(GymBiomechanics.serializer(), gymBio.value) else null
+
+                Log.d(TAG, "Preparando datos: device=$validDeviceId sport=$sportType start=$startTsIso dur=${state.elapsedSeconds}s")
 
                 val entrenamiento = Entrenamiento(
-                    device_id = validDeviceId,
-                    sport_type = sportType,
-                    start_timestamp = startTs,
-                    end_timestamp = endTs,
-                    duration_seconds = state.elapsedSeconds.toInt(),
-                    hr_avg = hrAvg,
-                    hr_max = hrMax,
-                    hr_min = hrMin,
-                    hr_samples = hrSamples,
-                    rpe = validRpe,
-                    futbol_biomechanics = bioJson
+                    device_id          = validDeviceId,
+                    sport_type         = sportType,
+                    start_timestamp    = startTsIso,
+                    end_timestamp      = endTsIso,
+                    duration_seconds   = state.elapsedSeconds,
+                    hr_avg             = hrAvg,
+                    hr_max             = hrMax,
+                    hr_min             = hrMin,
+                    hr_samples         = hrSamplesJson,
+                    rpe                = validRpe,
+                    zone1_seconds      = zones[0],
+                    zone2_seconds      = zones[1],
+                    zone3_seconds      = zones[2],
+                    zone4_seconds      = zones[3],
+                    zone5_seconds      = zones[4],
+                    futbol_biomechanics = futbolBioJson,
+                    padel_biomechanics  = padelBioJson,
+                    gym_biomechanics    = gymBioJson
                 )
                 Log.d(TAG, "Insertando en Supabase tabla 'entrenamientos'...")
-                supabaseClient.from("entrenamientos").insert(entrenamiento)
+                insertEntrenamiento(entrenamiento)
                 Log.d(TAG, "[Sync Paso 2] Entrenamiento guardado en Supabase")
 
                 val summary = WorkoutSummary(
@@ -262,36 +355,50 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
 
         val validRpe = rpe.coerceIn(0, 10)
         val sportType = normalizeSportType(state.selectedSport.name)
-        val hrSamples = if (heartRateHistory.isEmpty()) "0" else heartRateHistory.joinToString(",")
-        val bio = biomechanics.value
 
         try {
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-            val startTs = dateFormat.format(Date(state.startTime))
-            val endTs = dateFormat.format(Date(System.currentTimeMillis()))
-            val hrAvg = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toDouble() else 0.0
+            val startTs = state.startTime
+            val endTs = System.currentTimeMillis()
+            val startTsIso = Instant.ofEpochMilli(startTs).toString()
+            val endTsIso   = Instant.ofEpochMilli(endTs).toString()
+
+            val hrAvg = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toFloat() else 0f
             val hrMax = heartRateHistory.maxOrNull() ?: 0
             val hrMin = heartRateHistory.filter { it > 0 }.minOrNull() ?: 0
 
-            Log.d(TAG, "[Fallback] Preparando datos: deviceId=${deviceId}, sport=$sportType, start=$startTs, duracion=${state.elapsedSeconds}")
+            val hrSamplesJson = buildJsonArray { heartRateHistory.forEach { add(it) } }
+            val zones = calcZoneSeconds(heartRateHistory)
+            val futbolBioJson: JsonElement? = if (state.selectedSport == TipoDeporte.FUTBOL)
+                SupabaseConfig.supabaseJson.encodeToJsonElement(FutbolBiomechanics.serializer(), futbolBio.value) else null
+            val padelBioJson: JsonElement? = if (state.selectedSport == TipoDeporte.PADEL)
+                SupabaseConfig.supabaseJson.encodeToJsonElement(PadelBiomechanics.serializer(), padelBio.value) else null
+            val gymBioJson: JsonElement? = if (state.selectedSport == TipoDeporte.GIMNASIO)
+                SupabaseConfig.supabaseJson.encodeToJsonElement(GymBiomechanics.serializer(), gymBio.value) else null
 
-            val bioJson = """{"carga_mecanica_g":${bio.carga_mecanica_g},"impacto_fuerza_g":${bio.impacto_fuerza_g},"rotacion_tronco_x":${bio.rotacion_tronco_x},"rotacion_tronco_y":${bio.rotacion_tronco_y},"repeticiones":${bio.repeticiones},"velocidad_concentrica_promedio":${bio.velocidad_concentrica_promedio}}"""
+            Log.d(TAG, "[Live] deviceId=$deviceId sport=$sportType start=$startTsIso dur=${state.elapsedSeconds}s")
 
             val entrenamiento = Entrenamiento(
-                device_id = deviceId.ifBlank { "H10_UNKNOWN" },
-                sport_type = sportType,
-                start_timestamp = startTs,
-                end_timestamp = endTs,
-                duration_seconds = state.elapsedSeconds.toInt(),
-                hr_avg = hrAvg.toInt(),
-                hr_max = hrMax,
-                hr_min = hrMin,
-                hr_samples = hrSamples,
-                rpe = validRpe,
-                futbol_biomechanics = bioJson
+                device_id          = deviceId.ifBlank { "H10_UNKNOWN" },
+                sport_type         = sportType,
+                start_timestamp    = startTsIso,
+                end_timestamp      = endTsIso,
+                duration_seconds   = state.elapsedSeconds,
+                hr_avg             = hrAvg,
+                hr_max             = hrMax,
+                hr_min             = hrMin,
+                hr_samples         = hrSamplesJson,
+                rpe                = validRpe,
+                zone1_seconds      = zones[0],
+                zone2_seconds      = zones[1],
+                zone3_seconds      = zones[2],
+                zone4_seconds      = zones[3],
+                zone5_seconds      = zones[4],
+                futbol_biomechanics = futbolBioJson,
+                padel_biomechanics  = padelBioJson,
+                gym_biomechanics    = gymBioJson
             )
             Log.d(TAG, "[Fallback] Insertando en Supabase...")
-            supabaseClient.from("entrenamientos").insert(entrenamiento)
+            insertEntrenamiento(entrenamiento)
             Log.d(TAG, "[Fallback] Insertado exitosamente")
 
             val summary = WorkoutSummary(
@@ -319,6 +426,22 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
                 errorMessage = "Error al guardar: ${e.message}"
             ) }
         }
+    }
+
+    private fun calcZoneSeconds(hrSamples: List<Int>): IntArray {
+        val zones = IntArray(5)
+        for (hr in hrSamples) {
+            if (hr <= 0) continue
+            zones[calculateHRZone(hr).ordinal]++
+        }
+        return zones
+    }
+
+    private suspend fun insertEntrenamiento(entrenamiento: Entrenamiento) {
+        val jsonObj = SupabaseConfig.supabaseJson
+            .encodeToJsonElement(Entrenamiento.serializer(), entrenamiento)
+            .jsonObject
+        supabaseClient.from("entrenamientos").insert(jsonObj)
     }
 
     private fun normalizeSportType(raw: String): String = when (raw) {

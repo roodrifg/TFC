@@ -23,12 +23,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.History
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Sports
+import androidx.compose.material.icons.filled.SportsSoccer
+import androidx.compose.material.icons.filled.SportsTennis
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.CircularProgressIndicator
@@ -127,10 +130,9 @@ fun DashboardScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_futbol),
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(24.dp)
+                            tint = TextPrimary
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -148,10 +150,9 @@ fun DashboardScreen(
 
                 IconButton(onClick = onNavigateToHistory) {
                     Icon(
-                        painter = painterResource(id = R.drawable.ic_futbol),
+                        imageVector = Icons.Default.History,
                         contentDescription = "History",
-                        tint = NeonCyan,
-                        modifier = Modifier.size(24.dp)
+                        tint = NeonCyan
                     )
                 }
             }
@@ -374,11 +375,10 @@ private fun SportBreakdownSection(stats: DashboardStats) {
                         else -> NeonCyan
                     }
 
-                    val sportIcon = when (sport.lowercase()) {
-                        "futbol" -> R.drawable.ic_futbol
-                        "padel" -> R.drawable.ic_padel
-                        "gimnasio" -> R.drawable.ic_gym
-                        else -> R.drawable.ic_gym
+                    val sportIcon: ImageVector = when (sport.lowercase()) {
+                        "futbol" -> Icons.Default.SportsSoccer
+                        "padel" -> Icons.Default.SportsTennis
+                        else -> Icons.Default.FitnessCenter
                     }
 
                     val totalSessions = stats.totalSessions
@@ -386,7 +386,7 @@ private fun SportBreakdownSection(stats: DashboardStats) {
 
                     SportRow(
                         name = sport.uppercase(),
-                        iconRes = sportIcon,
+                        sportIcon = sportIcon,
                         color = sportColor,
                         sessions = count,
                         percentage = percentage,
@@ -416,7 +416,7 @@ private fun SportBreakdownSection(stats: DashboardStats) {
 @Composable
 private fun SportRow(
     name: String,
-    iconRes: Int,
+    sportIcon: ImageVector,
     color: Color,
     sessions: Int,
     percentage: Float,
@@ -435,7 +435,7 @@ private fun SportRow(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(id = iconRes),
+                    imageVector = sportIcon,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(20.dp)
@@ -685,17 +685,17 @@ private fun createMockStats(period: ViewPeriod, sessions: List<TrainingSession>)
         totalDurationSeconds = sessions.sumOf { it.durationSeconds.toLong() },
         totalMinutes = sessions.sumOf { it.durationSeconds } / 60,
         avgSessionDurationMinutes = if (sessions.isNotEmpty()) sessions.sumOf { it.durationSeconds } / 60 / sessions.size else 0,
-        avgHr = sessions.map { it.hrAvg }.filter { it > 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0,
+        avgHr = sessions.map { it.hrAvg }.filter { it > 0f }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0,
         maxHr = sessions.maxOfOrNull { it.hrMax } ?: 0,
         minHr = sessions.filter { it.hrMin > 0 }.minOfOrNull { it.hrMin } ?: 0,
         avgRpe = sessions.map { it.rpe }.filter { it > 0 }.takeIf { it.isNotEmpty() }?.average()?.toFloat() ?: 0f,
         sessionsBySport = sessions.groupBy { it.sportType }.mapValues { it.value.size },
         hrBySport = sessions.groupBy { it.sportType }.mapValues { entries ->
-            entries.value.map { it.hrAvg }.filter { hr -> hr > 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0
+            entries.value.map { it.hrAvg }.filter { hr -> hr > 0f }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 0
         },
         durationBySport = sessions.groupBy { it.sportType }.mapValues { it.value.sumOf { s -> s.durationSeconds.toLong() } },
         weeklyVolumes = emptyList(),
-        hrTrend = sessions.map { it.hrAvg }.filter { it > 0 },
+        hrTrend = sessions.map { it.hrAvg.toInt() }.filter { it > 0 },
         totalImpacts = 0,
         totalSmashes = 0,
         totalReps = 0,

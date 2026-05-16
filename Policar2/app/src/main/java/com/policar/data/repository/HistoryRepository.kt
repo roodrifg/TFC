@@ -22,31 +22,31 @@ class HistoryRepository {
     private val supabase = SupabaseConfig.supabase
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun fetchSessions(userId: String, limit: Int = 100): Result<List<TrainingSession>> = withContext(Dispatchers.IO) {
+    suspend fun fetchSessions(deviceId: String = "", limit: Int = 100): Result<List<TrainingSession>> = withContext(Dispatchers.IO) {
         try {
-            val response = supabase.postgrest["entrenamientos"]
-                .select()
+            val response = supabase.postgrest["entrenamientos"].select()
             val allSessions = response.decodeList<TrainingSession>()
-            val filtered = allSessions.filter { session -> session.userId == userId }
-            Result.success(filtered.take(limit))
+            val filtered = if (deviceId.isBlank()) allSessions
+                           else allSessions.filter { it.deviceId == deviceId }
+            Result.success(filtered.sortedByDescending { it.startTimestamp }.take(limit))
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     suspend fun fetchSessionsByDateRange(
-        userId: String,
+        deviceId: String = "",
         startDate: String,
         endDate: String
     ): Result<List<TrainingSession>> = withContext(Dispatchers.IO) {
         try {
-            val response = supabase.postgrest["entrenamientos"]
-                .select()
+            val response = supabase.postgrest["entrenamientos"].select()
             val allSessions = response.decodeList<TrainingSession>()
             val start = LocalDate.parse(startDate.substringBefore("T"))
             val end = LocalDate.parse(endDate.substringBefore("T"))
             val filtered = allSessions.filter { session ->
-                session.userId == userId && try {
+                val inDevice = deviceId.isBlank() || session.deviceId == deviceId
+                inDevice && try {
                     val sessionDate = Instant.ofEpochMilli(session.startTimestamp)
                         .atZone(ZoneId.systemDefault()).toLocalDate()
                     !sessionDate.isBefore(start) && !sessionDate.isAfter(end)
@@ -61,7 +61,7 @@ class HistoryRepository {
     }
 
     suspend fun fetchSessionsForPeriod(
-        userId: String,
+        deviceId: String = "",
         period: ViewPeriod
     ): Result<List<TrainingSession>> = withContext(Dispatchers.IO) {
         val endDate = LocalDate.now()
@@ -71,15 +71,15 @@ class HistoryRepository {
         val startStr = startDate.atStartOfDay().format(formatter)
         val endStr = endDate.plusDays(1).atStartOfDay().format(formatter)
 
-        fetchSessionsByDateRange(userId, startStr, endStr)
+        fetchSessionsByDateRange(deviceId, startStr, endStr)
     }
 
     suspend fun calculateDashboardStats(
-        userId: String,
+        deviceId: String = "",
         period: ViewPeriod
     ): Result<DashboardStats> = withContext(Dispatchers.IO) {
         try {
-            val sessionsResult = fetchSessionsForPeriod(userId, period)
+            val sessionsResult = fetchSessionsForPeriod(deviceId, period)
             val sessions = sessionsResult.getOrThrow()
 
             if (sessions.isEmpty()) {
@@ -117,15 +117,15 @@ class HistoryRepository {
             totalMinutes = (totalDurationSeconds / 60).toInt()
             val avgSessionDurationMinutes = if (totalSessions > 0) totalMinutes / totalSessions else 0
 
-            var hrSum = 0
+            var hrSum = 0f
             var hrCount = 0
             for (s in sessions) {
-                if (s.hrAvg > 0) {
+                if (s.hrAvg > 0f) {
                     hrSum += s.hrAvg
                     hrCount++
                 }
             }
-            val avgHr = if (hrCount > 0) hrSum / hrCount else 0
+            val avgHr = if (hrCount > 0) (hrSum / hrCount).toInt() else 0
 
             var maxHr = 0
             for (s in sessions) {
@@ -156,15 +156,15 @@ class HistoryRepository {
 
             val hrBySport = mutableMapOf<String, Int>()
             for ((sport, sportSessionsList) in sessionsBySportList) {
-                var sportHrSum = 0
+                var sportHrSum = 0f
                 var sportHrCount = 0
                 for (s in sportSessionsList) {
-                    if (s.hrAvg > 0) {
+                    if (s.hrAvg > 0f) {
                         sportHrSum += s.hrAvg
                         sportHrCount++
                     }
                 }
-                hrBySport[sport] = if (sportHrCount > 0) sportHrSum / sportHrCount else 0
+                hrBySport[sport] = if (sportHrCount > 0) (sportHrSum / sportHrCount).toInt() else 0
             }
 
             val durationBySport = mutableMapOf<String, Long>()
@@ -179,32 +179,9 @@ class HistoryRepository {
             val weeklyVolumes = calculateWeeklyVolumes(sessions)
             val hrTrend = calculateHrTrend(sessions)
 
-            var totalImpacts = 0
-            for (session in sessions) {
-                try {
-                    if (session.sportType == "FUTBOL" && session.impactForceG > 0) {
-                        totalImpacts++
-                    }
-                } catch (e: Exception) { }
-            }
-
-            var totalSmashes = 0
-            for (session in sessions) {
-                try {
-                    if (session.sportType == "PADEL" && session.trunkRotationX > 0) {
-                        totalSmashes++
-                    }
-                } catch (e: Exception) { }
-            }
-
-            var totalReps = 0
-            for (session in sessions) {
-                try {
-                    if (session.sportType == "GIMNASIO" && session.reps > 0) {
-                        totalReps += session.reps
-                    }
-                } catch (e: Exception) { }
-            }
+            val totalImpacts = sessions.count { it.sportType.uppercase() == "FUTBOL" }
+            val totalSmashes = sessions.count { it.sportType.uppercase() == "PADEL" }
+            val totalReps = sessions.count { it.sportType.uppercase() == "GIMNASIO" }
 
             val currentStreak = calculateCurrentStreak(sessions)
             val longestStreak = calculateLongestStreak(sessions)
@@ -254,15 +231,15 @@ class HistoryRepository {
             for (s in daySessions) {
                 duration += s.durationSeconds.toLong()
             }
-            var hrSum = 0
+            var hrSum = 0f
             var hrCount = 0
             for (s in daySessions) {
-                if (s.hrAvg > 0) {
+                if (s.hrAvg > 0f) {
                     hrSum += s.hrAvg
                     hrCount++
                 }
             }
-            val avgHr = if (hrCount > 0) hrSum / hrCount else 0
+            val avgHr = if (hrCount > 0) (hrSum / hrCount).toInt() else 0
 
             DailyVolume(
                 date = date.toEpochDay() * 24 * 60 * 60 * 1000,
@@ -277,7 +254,7 @@ class HistoryRepository {
     private fun calculateHrTrend(sessions: List<TrainingSession>): List<Int> {
         return sessions
             .sortedBy { it.startTimestamp }
-            .map { it.hrAvg }
+            .map { it.hrAvg.toInt() }
             .filter { it > 0 }
             .takeLast(30)
     }

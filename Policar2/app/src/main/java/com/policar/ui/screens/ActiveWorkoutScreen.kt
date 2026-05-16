@@ -1,5 +1,6 @@
 package com.policar.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -37,14 +38,29 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.annotation.DrawableRes
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Balance
+import androidx.compose.material.icons.filled.DirectionsRun
+import androidx.compose.material.icons.filled.SportsSoccer
+import androidx.compose.material.icons.filled.SportsTennis
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -100,6 +116,7 @@ import com.policar.data.model.GymRepData
 import com.policar.data.model.HRZone
 import com.policar.data.model.PadelBiomechanics
 import com.policar.data.model.StressLevel
+import com.policar.data.model.SyncState
 import com.policar.data.model.TipoDeporte
 import com.policar.data.model.WorkoutSummary
 import com.policar.ui.screens.GlassCard
@@ -137,6 +154,14 @@ private fun computeHrZone(hr: Int): HRZone = when {
     else -> HRZone.ZONE_5
 }
 
+private fun computeStressLevel(stress: Double): StressLevel = when {
+    stress < 20.0 -> StressLevel.VERY_LOW
+    stress < 40.0 -> StressLevel.LOW
+    stress < 60.0 -> StressLevel.MODERATE
+    stress < 80.0 -> StressLevel.HIGH
+    else          -> StressLevel.VERY_HIGH
+}
+
 @Composable
 fun ActiveWorkoutScreen(
     navController: NavController,
@@ -145,6 +170,8 @@ fun ActiveWorkoutScreen(
     val uiState        by viewModel.uiState.collectAsStateWithLifecycle()
     val heartRate     by viewModel.hrValue.collectAsStateWithLifecycle()
     val hrvStress    by viewModel.hrvStress.collectAsStateWithLifecycle()
+    val rmssdVal     by viewModel.rmssd.collectAsStateWithLifecycle()
+    val rrIntervalMs by viewModel.rrIntervalMs.collectAsStateWithLifecycle()
     val ecgSamples   by viewModel.ecgSamples.collectAsStateWithLifecycle()
     val recording   by viewModel.recordingStatus.collectAsStateWithLifecycle()
     val tick        by viewModel.tick.collectAsStateWithLifecycle()
@@ -161,10 +188,15 @@ fun ActiveWorkoutScreen(
         }
     }
 
-    var showStopDialog  by remember { mutableStateOf(false) }
-    var showRpeDialog   by remember { mutableStateOf(false) }
-    var selectedRpe     by remember { mutableStateOf(5) }
+    var showStopDialog    by remember { mutableStateOf(false) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
+    var showRpeDialog     by remember { mutableStateOf(false) }
+    var selectedRpe       by remember { mutableStateOf(5) }
     var showSuccessScreen by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = uiState.isActive && !uiState.isSaving) {
+        showStopDialog = true
+    }
 
     LaunchedEffect(uiState.savedSuccessfully, uiState.savedWorkoutSummary) {
         if (uiState.savedSuccessfully && uiState.savedWorkoutSummary != null) {
@@ -213,16 +245,16 @@ fun ActiveWorkoutScreen(
                 BpmHeroSection(
                     heartRate = heartRate,
                     hrZone    = computeHrZone(heartRate),
-                    rmssd     = hrvStress.toFloat(),
-                    rrMs      = hrvStress.toLong()
+                    rmssd     = rmssdVal.toFloat(),
+                    rrMs      = rrIntervalMs
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 HrvPanel(
-                    rmssd       = viewModel.telemetry.rmssd.toFloat(),
-                    stressLevel = StressLevel.LOW,
-                    rrInterval  = viewModel.telemetry.rrInterval.toLong()
+                    rmssd       = rmssdVal.toFloat(),
+                    stressLevel = computeStressLevel(hrvStress),
+                    rrInterval  = rrIntervalMs
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -230,13 +262,13 @@ fun ActiveWorkoutScreen(
                 when (viewModel.selectedSport) {
                     TipoDeporte.FUTBOL -> FutbolBiomechanicsPanel(
                         data = futbolBio,
-                        currentGForce = futbolBio.maxGForce,
-                        isImpact = futbolBio.avgGForce > 2.0f
+                        currentGForce = futbolBio.currentGForce,
+                        isImpact = futbolBio.currentGForce > 1.5f
                     )
                     TipoDeporte.PADEL -> PadelBiomechanicsPanel(
                         data = padelBio,
-                        currentX = 0,
-                        currentY = padelBio.maxRotationDps.toInt()
+                        currentX = padelBio.currentXmG.toInt(),
+                        currentY = padelBio.currentYmG.toInt()
                     )
                     TipoDeporte.GIMNASIO -> GymBiomechanicsPanel(
                         data = gymBio,
@@ -247,7 +279,7 @@ fun ActiveWorkoutScreen(
                 Spacer(modifier = Modifier.height(40.dp))
             }
 
-            if (uiState.syncState.toString() == "UPLOADING" || uiState.syncState.toString() == "DOWNLOADING") {
+            if (uiState.syncState is SyncState.Uploading || uiState.syncState is SyncState.Downloading) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -272,7 +304,7 @@ fun ActiveWorkoutScreen(
             title = { Text("Finalizar entrenamiento", fontWeight = FontWeight.Bold) },
             text  = {
                 Text(
-                    "¿Deseas terminar y guardar el entrenamiento en Supabase?",
+                    "¿Qué deseas hacer con el entrenamiento actual?",
                     color = TextSecondary
                 )
             },
@@ -284,12 +316,54 @@ fun ActiveWorkoutScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = NeonRed)
                 ) {
-                    Text("Finalizar")
+                    Text("Guardar")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showStopDialog = false }) {
-                    Text("Continuar", color = NeonCyan)
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    TextButton(onClick = {
+                        showStopDialog = false
+                        showDiscardDialog = true
+                    }) {
+                        Text("Descartar", color = NeonRedAlert)
+                    }
+                    TextButton(onClick = { showStopDialog = false }) {
+                        Text("Continuar", color = NeonCyan)
+                    }
+                }
+            }
+        )
+    }
+
+    if (showDiscardDialog) {
+        AlertDialog(
+            onDismissRequest  = { showDiscardDialog = false },
+            containerColor    = SurfaceDark,
+            titleContentColor = TextPrimary,
+            title = { Text("¿Descartar entrenamiento?", fontWeight = FontWeight.Bold) },
+            text  = {
+                Text(
+                    "Se perderán todos los datos del entrenamiento. Esta acción no se puede deshacer.",
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDiscardDialog = false
+                        viewModel.discardWorkout()
+                        navController.popBackStack(NavRoutes.HOME, inclusive = false)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonRedAlert)
+                ) {
+                    Text("Descartar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardDialog = false }) {
+                    Text("Cancelar", color = NeonCyan)
                 }
             }
         )
@@ -317,11 +391,10 @@ private fun WorkoutSavedScreen(
     summary: WorkoutSummary,
     onExit: () -> Unit
 ) {
-    val sportIcon = when (summary.sportType.uppercase()) {
-        "FUTBOL" -> R.drawable.ic_futbol
-        "PADEL" -> R.drawable.ic_padel
-        "GIMNASIO" -> R.drawable.ic_gym
-        else -> R.drawable.ic_gym
+    val sportIcon: ImageVector = when (summary.sportType.uppercase()) {
+        "FUTBOL" -> Icons.Default.SportsSoccer
+        "PADEL" -> Icons.Default.SportsTennis
+        else -> Icons.Default.FitnessCenter
     }
 
     val sportColor = when (summary.sportType.uppercase()) {
@@ -377,7 +450,7 @@ private fun WorkoutSavedScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    painter = painterResource(sportIcon),
+                    imageVector = sportIcon,
                     contentDescription = null,
                     modifier = Modifier.size(40.dp),
                     tint = sportColor
@@ -524,7 +597,22 @@ private fun WorkoutTopBar(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = sport.displayName.take(1), fontSize = 20.sp)
+            val sportIcon: ImageVector = when (sport) {
+                TipoDeporte.FUTBOL   -> Icons.Default.SportsSoccer
+                TipoDeporte.PADEL    -> Icons.Default.SportsTennis
+                TipoDeporte.GIMNASIO -> Icons.Default.FitnessCenter
+            }
+            val sportColor = when (sport) {
+                TipoDeporte.FUTBOL   -> SportFutbol
+                TipoDeporte.PADEL    -> SportPadel
+                TipoDeporte.GIMNASIO -> SportGym
+            }
+            Icon(
+                imageVector = sportIcon,
+                contentDescription = sport.displayName,
+                modifier = Modifier.size(22.dp),
+                tint = sportColor
+            )
             Spacer(modifier = Modifier.width(8.dp))
             Column {
                 Text(
@@ -707,9 +795,9 @@ private fun HrvPanel(
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        MetricCard(modifier = Modifier.weight(1f), label = "HRV RMSSD", value = "${"%.0f".format(rmssd)}", unit = "ms", color = NeonCyan, icon = "HRV")
-        MetricCard(modifier = Modifier.weight(1f), label = "ESTRÉS", value = stressLevel.label, unit = "", color = stressColor, icon = if (stressLevel.ordinal < 2) "OK" else "ALERT")
-        MetricCard(modifier = Modifier.weight(1f), label = "R-R", value = "$rrInterval", unit = "ms", color = TextSecondary, icon = "RR")
+        MetricCard(modifier = Modifier.weight(1f), label = "HRV RMSSD", value = "${"%.0f".format(rmssd)}", unit = "ms", color = NeonCyan, icon = Icons.Default.Timeline)
+        MetricCard(modifier = Modifier.weight(1f), label = "ESTRES", value = stressLevel.label, unit = "", color = stressColor, icon = if (stressLevel.ordinal < 2) Icons.Default.Favorite else Icons.Default.Warning)
+        MetricCard(modifier = Modifier.weight(1f), label = "R-R", value = "$rrInterval", unit = "ms", color = TextSecondary, icon = Icons.Default.Favorite)
     }
 }
 
@@ -719,31 +807,45 @@ private fun FutbolBiomechanicsPanel(data: FutbolBiomechanics, currentGForce: Flo
     val impactAlpha by infiniteTransition.animateFloat(initialValue = 0.4f, targetValue = 1f, animationSpec = infiniteRepeatable(tween(300), RepeatMode.Reverse), label = "impact_alpha")
 
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-        SectionHeader(icon = "FOOTBALL", title = "BIOMECHANICS · FOOTBALL", color = SportFutbol)
+        SectionHeader(sportIcon = Icons.Default.SportsSoccer, title = "BIOMECHANICS · FOOTBALL", color = SportFutbol)
         Spacer(modifier = Modifier.height(10.dp))
 
         GlassCard {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "FUERZA G ACTUAL", fontSize = 10.sp, color = TextTertiary, letterSpacing = 1.sp)
-                    if (isImpact) {
-                        Box(modifier = Modifier.alpha(impactAlpha).clip(RoundedCornerShape(4.dp)).background(StatusDanger.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                            Text(text = "IMPACT", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = StatusDanger, letterSpacing = 1.sp)
+                    Text(text = "ACELERACION NETA", fontSize = 10.sp, color = TextTertiary, letterSpacing = 1.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (data.isCurrentlySprinting) {
+                            Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(NeonYellow.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                Text(text = "SPRINT", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = NeonYellow, letterSpacing = 1.sp)
+                            }
+                        }
+                        if (isImpact) {
+                            Box(modifier = Modifier.alpha(impactAlpha).clip(RoundedCornerShape(4.dp)).background(StatusDanger.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                                Text(text = "IMPACT", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = StatusDanger, letterSpacing = 1.sp)
+                            }
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(text = "${"%.2f".format(currentGForce)} G", fontWeight = FontWeight.Black, fontSize = 32.sp, color = if (isImpact) StatusDanger else SportFutbol)
+                Text(text = "${"%.2f".format(currentGForce)} G", fontWeight = FontWeight.Black, fontSize = 32.sp, color = if (isImpact) StatusDanger else if (data.isCurrentlySprinting) NeonYellow else SportFutbol)
                 Spacer(modifier = Modifier.height(8.dp))
-                GForceBar(normalized = min(currentGForce / 8f, 1f))
+                GForceBar(normalized = min(currentGForce / 4f, 1f))
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard(modifier = Modifier.weight(1f), label = "IMPACTOS", value = "${data.totalImpacts}", unit = "", color = SportFutbol, icon = "IMPACT")
-            MetricCard(modifier = Modifier.weight(1f), label = "ALTA INTENSIDAD", value = "${data.highIntensityImpacts}", unit = ">3G", color = StatusDanger, icon = "HIR")
-            MetricCard(modifier = Modifier.weight(1f), label = "G MAX", value = "${"%.1f".format(data.maxGForce)}", unit = "G", color = NeonYellow, icon = "GMAX")
+            MetricCard(modifier = Modifier.weight(1f), label = "IMPACTOS", value = "${data.totalImpacts}", unit = "", color = SportFutbol, icon = Icons.Default.FlashOn)
+            MetricCard(modifier = Modifier.weight(1f), label = "ALTA INTENS.", value = "${data.highIntensityImpacts}", unit = ">3G", color = StatusDanger, icon = Icons.AutoMirrored.Filled.TrendingUp)
+            MetricCard(modifier = Modifier.weight(1f), label = "G MAX", value = "${"%.1f".format(data.maxGForce)}", unit = "G", color = NeonYellow, icon = Icons.Default.KeyboardArrowUp)
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            MetricCard(modifier = Modifier.weight(1f), label = "SPRINTS", value = "${data.sprintCount}", unit = "", color = NeonYellow, icon = Icons.Default.DirectionsRun)
+            MetricCard(modifier = Modifier.weight(1f), label = "SALTOS", value = "${data.jumpCount}", unit = "", color = NeonCyan, icon = Icons.Default.KeyboardArrowUp)
+            MetricCard(modifier = Modifier.weight(1f), label = "ASIMETRIA", value = "${"%.0f".format(data.asymmetryScore)}", unit = "%", color = if (data.asymmetryScore < 15f) NeonGreen else NeonYellow, icon = Icons.Default.Balance)
         }
 
         Spacer(modifier = Modifier.height(10.dp))
@@ -764,12 +866,12 @@ private fun FutbolBiomechanicsPanel(data: FutbolBiomechanics, currentGForce: Flo
 @Composable
 private fun PadelBiomechanicsPanel(data: PadelBiomechanics, currentX: Int, currentY: Int) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-        SectionHeader(icon = "PADEL", title = "BIOMECHANICS · PADEL", color = SportPadel)
+        SectionHeader(sportIcon = Icons.Default.SportsTennis, title = "BIOMECHANICS · PADEL", color = SportPadel)
         Spacer(modifier = Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard(modifier = Modifier.weight(1f), label = "SMASHES", value = "${data.totalSmashes}", unit = "", color = SportPadel, icon = "PADEL")
-            MetricCard(modifier = Modifier.weight(1f), label = "ROT. PICO", value = "${"%.0f".format(data.maxRotationDps)}", unit = "deg/s", color = NeonCyan, icon = "ROT")
-            MetricCard(modifier = Modifier.weight(1f), label = "ASIMETRIA", value = "${"%.0f".format(data.asymmetryScore * 100)}", unit = "%", color = if (data.asymmetryScore < 0.2f) NeonGreen else NeonYellow, icon = "ASYMM")
+            MetricCard(modifier = Modifier.weight(1f), label = "SMASHES", value = "${data.totalSmashes}", unit = "", color = SportPadel, icon = Icons.Default.FlashOn)
+            MetricCard(modifier = Modifier.weight(1f), label = "ROT. PICO", value = "${"%.0f".format(data.maxRotationDps)}", unit = "deg/s", color = NeonCyan, icon = Icons.AutoMirrored.Filled.RotateRight)
+            MetricCard(modifier = Modifier.weight(1f), label = "ASIMETRIA", value = "${"%.0f".format(data.asymmetryScore * 100)}", unit = "%", color = if (data.asymmetryScore < 0.2f) NeonGreen else NeonYellow, icon = Icons.Default.Balance)
         }
         Spacer(modifier = Modifier.height(10.dp))
         GlassCard {
@@ -802,7 +904,7 @@ private fun PadelBiomechanicsPanel(data: PadelBiomechanics, currentX: Int, curre
 @Composable
 private fun GymBiomechanicsPanel(data: GymBiomechanics, velocityAlert: Boolean) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-        SectionHeader(icon = "GYM", title = "BIOMECHANICS · GYM", color = SportGym)
+        SectionHeader(sportIcon = Icons.Default.FitnessCenter, title = "BIOMECHANICS · GYM", color = SportGym)
         Spacer(modifier = Modifier.height(10.dp))
 
         AnimatedVisibility(visible = velocityAlert) {
@@ -815,9 +917,9 @@ private fun GymBiomechanicsPanel(data: GymBiomechanics, velocityAlert: Boolean) 
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard(modifier = Modifier.weight(1f), label = "REPS", value = "${data.totalReps}", unit = "", color = SportGym, icon = "REPS")
-            MetricCard(modifier = Modifier.weight(1f), label = "SERIES", value = "${data.totalSets}", unit = "", color = NeonYellow, icon = "SETS")
-            MetricCard(modifier = Modifier.weight(1f), label = "VELOCIDAD", value = "${"%.2f".format(data.avgVelocityMs)}", unit = "m/s", color = if (!velocityAlert) NeonGreen else StatusDanger, icon = "VEL")
+            MetricCard(modifier = Modifier.weight(1f), label = "REPS", value = "${data.totalReps}", unit = "", color = SportGym, icon = Icons.Default.Repeat)
+            MetricCard(modifier = Modifier.weight(1f), label = "SERIES", value = "${data.totalSets}", unit = "", color = NeonYellow, icon = Icons.Default.FitnessCenter)
+            MetricCard(modifier = Modifier.weight(1f), label = "VELOCIDAD", value = "${"%.2f".format(data.avgVelocityMs)}", unit = "m/s", color = if (!velocityAlert) NeonGreen else StatusDanger, icon = Icons.Default.Speed)
         }
 
         if (data.repsData.isNotEmpty()) {
@@ -921,10 +1023,10 @@ private fun VelocitySparklineChart(reps: List<GymRepData>) {
 }
 
 @Composable
-private fun MetricCard(modifier: Modifier = Modifier, label: String, value: String, unit: String, color: Color, icon: String) {
+private fun MetricCard(modifier: Modifier = Modifier, label: String, value: String, unit: String, color: Color, icon: ImageVector) {
     Box(modifier = modifier.clip(RoundedCornerShape(12.dp)).background(SurfaceDark).border(1.dp, BorderSubtle, RoundedCornerShape(12.dp)).padding(12.dp)) {
         Column {
-            Text(text = icon, fontSize = 14.sp)
+            Icon(imageVector = icon, contentDescription = null, tint = color.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.height(4.dp))
             AnimatedContent(targetState = value, transitionSpec = { slideInVertically { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut() }, label = "metric_$label") { v ->
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -939,9 +1041,9 @@ private fun MetricCard(modifier: Modifier = Modifier, label: String, value: Stri
 }
 
 @Composable
-private fun SectionHeader(icon: String, title: String, color: Color) {
+private fun SectionHeader(sportIcon: ImageVector, title: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = icon, fontSize = 14.sp)
+        Icon(imageVector = sportIcon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(6.dp))
         Text(text = title, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = color, letterSpacing = 1.sp)
         Spacer(modifier = Modifier.width(8.dp))

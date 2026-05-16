@@ -2,6 +2,8 @@ package com.policar.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  POLICAR — DATA MODELS (UNIFIED)
@@ -16,9 +18,9 @@ enum class TipoDeporte(
     val supportsOffline: Boolean,
     val description: String
 ) {
-    FUTBOL("Fútbol", "⚽", true, "Carga G · Impactos · Balance"),
-    PADEL("Pádel", "🎾", true, "Rotación X/Y · Smashes"),
-    GIMNASIO("Gimnasio", "🏋️", false, "Reps · Velocidad Concéntrica")
+    FUTBOL("Futbol", "", true, "Carga G - Impactos - Balance"),
+    PADEL("Padel", "", true, "Rotacion X/Y - Smashes"),
+    GIMNASIO("Gimnasio", "", false, "Reps - Velocidad Concentrica")
 }
 
 typealias SportType = TipoDeporte
@@ -26,10 +28,10 @@ typealias SportType = TipoDeporte
 // ─── Zonas de frecuencia cardíaca (Karvonen) ──────────────────────────────
 
 enum class HRZone(val label: String, val minPercent: Float, val maxPercent: Float) {
-    ZONE_1("Recuperación", 0.50f, 0.60f),
-    ZONE_2("Base aeróbica", 0.60f, 0.70f),
-    ZONE_3("Aeróbica", 0.70f, 0.80f),
-    ZONE_4("Umbral láctico", 0.80f, 0.90f),
+    ZONE_1("Recuperacion", 0.50f, 0.60f),
+    ZONE_2("Base aerobica", 0.60f, 0.70f),
+    ZONE_3("Aerobica", 0.70f, 0.80f),
+    ZONE_4("Umbral lactico", 0.80f, 0.90f),
     ZONE_5("VO2 Max", 0.90f, 1.00f)
 }
 
@@ -46,8 +48,8 @@ enum class StressLevel(val label: String) {
 // ─── Modo de grabación ────────────────────────────────────────────────────────
 
 enum class ModoGrabacion(val label: String, val description: String) {
-    EN_VIVO("EN VIVO", "Telemetría en tiempo real"),
-    OFFLINE("GRABAR EN SENSOR", "H10 graba internamente · Sincroniza al finalizar")
+    EN_VIVO("EN VIVO", "Telemetria en tiempo real"),
+    OFFLINE("GRABAR EN SENSOR", "H10 graba internamente - Sincroniza al finalizar")
 }
 
 // ─── Estado de conexión BLE ───────────────────────────────────────────────────
@@ -63,10 +65,10 @@ sealed class ConnectionState {
     val isConnected: Boolean get() = this is Connected
     val isSearching: Boolean get() = this is Scanning || this is Connecting || this is Reconnecting
     val deviceIdOrNull: String? get() = when (this) {
-        is Connected -> deviceId
-        is Connecting -> deviceId
-        is Reconnecting -> deviceId
-        is Error -> deviceId
+        is Connected     -> deviceId
+        is Connecting    -> deviceId
+        is Reconnecting  -> deviceId
+        is Error         -> deviceId
         is Scanning, is Disconnected -> null
     }
 }
@@ -74,20 +76,20 @@ sealed class ConnectionState {
 // ─── Estado del pipeline Sync & Clean ─────────────────────────────────────────
 
 sealed class SyncState {
-    data object Idle : SyncState()
+    data object Idle        : SyncState()
     data object Downloading : SyncState()
-    data object Uploading : SyncState()
-    data object Clearing : SyncState()
-    data object Success : SyncState()
+    data object Uploading   : SyncState()
+    data object Clearing    : SyncState()
+    data object Success     : SyncState()
     data class Error(val message: String) : SyncState()
 
     val label: String get() = when (this) {
-        is Idle -> ""
-        is Downloading -> "↓ Descargando del sensor…"
-        is Uploading -> "☁ Subiendo a Supabase…"
-        is Clearing -> "🗑 Limpiando memoria H10…"
-        is Success -> "✓ Sincronizado correctamente"
-        is Error -> "✗ Error: $message"
+        is Idle        -> ""
+        is Downloading -> "Descargando del sensor..."
+        is Uploading   -> "Subiendo a Supabase..."
+        is Clearing    -> "Limpiando memoria H10..."
+        is Success     -> "Sincronizado correctamente"
+        is Error       -> "Error: $message"
     }
     val isInProgress: Boolean get() = this is Downloading || this is Uploading || this is Clearing
 }
@@ -183,24 +185,32 @@ data class GymRepData(
 
 @Serializable
 data class FutbolBiomechanics(
-    @SerialName("total_impacts") val totalImpacts: Int = 0,
-    @SerialName("high_intensity_impacts") val highIntensityImpacts: Int = 0,
-    @SerialName("max_g_force") val maxGForce: Float = 0f,
-    @SerialName("avg_g_force") val avgGForce: Float = 0f,
-    @SerialName("mechanical_load_score") val mechanicalLoadScore: Float = 0f,
+    @SerialName("total_impacts")           val totalImpacts: Int = 0,
+    @SerialName("high_intensity_impacts")  val highIntensityImpacts: Int = 0,
+    @SerialName("max_g_force")             val maxGForce: Float = 0f,
+    @SerialName("avg_g_force")             val avgGForce: Float = 0f,
+    @SerialName("mechanical_load_score")   val mechanicalLoadScore: Float = 0f,
     @SerialName("cardiovascular_load_score") val cardiovascularLoadScore: Float = 0f,
-    @SerialName("load_ratio") val loadRatio: Float = 0f,
-    @SerialName("flight_time_ms") val flightTimeMs: Long = 0L,
-    @SerialName("impacts") val impacts: List<ImpactEvent> = emptyList()
+    @SerialName("load_ratio")              val loadRatio: Float = 0f,
+    @SerialName("flight_time_ms")          val flightTimeMs: Long = 0L,
+    @SerialName("sprint_count")            val sprintCount: Int = 0,
+    @SerialName("jump_count")              val jumpCount: Int = 0,
+    @SerialName("asymmetry_score")         val asymmetryScore: Float = 0f,
+    @SerialName("impacts")                 val impacts: List<ImpactEvent> = emptyList(),
+    @kotlinx.serialization.Transient val currentGForce: Float = 0f,
+    @kotlinx.serialization.Transient val isCurrentlySprinting: Boolean = false
 )
 
 @Serializable
 data class PadelBiomechanics(
-    @SerialName("total_smashes") val totalSmashes: Int = 0,
+    @SerialName("total_smashes")    val totalSmashes: Int = 0,
     @SerialName("avg_rotation_dps") val avgRotationDps: Float = 0f,
     @SerialName("max_rotation_dps") val maxRotationDps: Float = 0f,
-    @SerialName("asymmetry_score") val asymmetryScore: Float = 0f,
-    @SerialName("smashes") val smashes: List<PadelSmashEvent> = emptyList()
+    @SerialName("asymmetry_score")  val asymmetryScore: Float = 0f,
+    @SerialName("smashes")          val smashes: List<PadelSmashEvent> = emptyList(),
+    @kotlinx.serialization.Transient val currentXmG: Float = 0f,
+    @kotlinx.serialization.Transient val currentYmG: Float = 0f,
+    @kotlinx.serialization.Transient val currentDynamicG: Float = 0f
 )
 
 @Serializable
@@ -214,23 +224,52 @@ data class GymBiomechanics(
 )
 
 // ─── Modelo Entrenamiento (tabla Supabase) ─────────────────────────────────────
+//
+//  NOTA IMPORTANTE: start_timestamp y end_timestamp son BIGINT en Supabase
+//  (epoch milliseconds). Esto permite round-trip limpio: insert Long → select Long.
+//  No usar String ISO porque Supabase devolveria timestamptz como String y
+//  romperia la deserializacion en TrainingSession.
+//
+//  Schema de la tabla 'entrenamientos':
+//    id                    UUID (auto-generado, no incluido aqui)
+//    device_id             TEXT
+//    sport_type            TEXT
+//    start_timestamp       BIGINT
+//    end_timestamp         BIGINT
+//    duration_seconds      INT
+//    hr_avg                INT
+//    hr_max                INT
+//    hr_min                INT
+//    rpe                   INT
+//    hr_samples            TEXT
+//    futbol_biomechanics   TEXT (JSON serializado)
+//    padel_biomechanics    TEXT (JSON serializado)
+//    gym_biomechanics      TEXT (JSON serializado)
+//    notes                 TEXT
 
 @Serializable
 data class Entrenamiento(
-    @SerialName("device_id") val device_id: String,
-    @SerialName("sport_type") val sport_type: String,
-    @SerialName("start_timestamp") val start_timestamp: String,
-    @SerialName("end_timestamp") val end_timestamp: String,
-    @SerialName("duration_seconds") val duration_seconds: Int,
-    @SerialName("hr_avg") val hr_avg: Int = 0,
-    @SerialName("hr_max") val hr_max: Int = 0,
-    @SerialName("hr_min") val hr_min: Int = 0,
-    @SerialName("rpe") val rpe: Int = 0,
-    @SerialName("hr_samples") val hr_samples: String = "",
-    @SerialName("futbol_biomechanics") val futbol_biomechanics: String = "",
-    @SerialName("padel_biomechanics") val padel_biomechanics: String = "",
-    @SerialName("gym_biomechanics") val gym_biomechanics: String = "",
-    @SerialName("notes") val notes: String = ""
+    @SerialName("device_id")           val device_id: String,
+    @SerialName("sport_type")          val sport_type: String,
+    @SerialName("start_timestamp")     val start_timestamp: String,
+    @SerialName("end_timestamp")       val end_timestamp: String,
+    @SerialName("duration_seconds")    val duration_seconds: Long,
+    @SerialName("hr_avg")              val hr_avg: Float               = 0f,
+    @SerialName("hr_max")              val hr_max: Int                 = 0,
+    @SerialName("hr_min")              val hr_min: Int                 = 0,
+    @SerialName("rpe")                 val rpe: Int                    = 0,
+    @SerialName("hr_samples")          val hr_samples: JsonElement     = JsonArray(emptyList()),
+    @SerialName("hrv_rmssd_avg")       val hrv_rmssd_avg: Float?       = null,
+    @SerialName("hrv_stress_level")    val hrv_stress_level: String?   = null,
+    @SerialName("zone1_seconds")       val zone1_seconds: Int          = 0,
+    @SerialName("zone2_seconds")       val zone2_seconds: Int          = 0,
+    @SerialName("zone3_seconds")       val zone3_seconds: Int          = 0,
+    @SerialName("zone4_seconds")       val zone4_seconds: Int          = 0,
+    @SerialName("zone5_seconds")       val zone5_seconds: Int          = 0,
+    @SerialName("futbol_biomechanics") val futbol_biomechanics: JsonElement? = null,
+    @SerialName("padel_biomechanics")  val padel_biomechanics: JsonElement?  = null,
+    @SerialName("gym_biomechanics")    val gym_biomechanics: JsonElement?    = null,
+    @SerialName("notes")               val notes: String               = ""
 )
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -323,6 +362,6 @@ fun calculateHRZone(hr: Int, maxHr: Int = 190): HRZone {
         pct < 0.70f -> HRZone.ZONE_2
         pct < 0.80f -> HRZone.ZONE_3
         pct < 0.90f -> HRZone.ZONE_4
-        else -> HRZone.ZONE_5
+        else        -> HRZone.ZONE_5
     }
 }

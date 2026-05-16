@@ -1,0 +1,34 @@
+Hola. Necesito que arregles un error de serialización en una app Android/Kotlin.
+
+## CONTEXTO DEL PROYECTO
+- App Android Native con Jetpack Compose
+- Uso de Supabase (postgrest-kt) para base de datos
+- Kotlin con Kotlinx Serialization
+
+## EL PROBLEMA
+Al finalizar un entrenamiento en modo "Live", se produce este error:
+"Serializer for class 'Any' is not found. Please ensure that class is marked as '@Serializable'"
+
+El error ocurre en WorkoutViewModel.kt cuando se ejecuta:
+    supabaseClient.from("entrenamientos").insert(entrenamiento)
+
+## ARCHIVO PRINCIPAL A REVISAR
+app/src/main/java/com/policar/ui/viewmodel/WorkoutViewModel.kt
+- Busca las líneas con ".insert(entrenamiento)" (líneas ~218 y ~294)
+- La clase Entrenamiento está en app/src/main/java/com/policar/data/model/Models.kt (líneas 218-234)
+
+## LO QUE YA SE INTENTÓ
+- Usar clase Entrenamiento con @Serializable
+- Usar strings JSON manual en lugar de Json.encodeToString(mapOf(...))
+
+## LO QUE DEBE FUNCIONAR
+1. Guardar correctamente el entrenamiento en Supabase (tabla "entrenamientos")
+2. Mostrar pantalla de resumen con "Entrenamiento_finalizado", fecha/hora inicio, fecha/hora fin, deporte, botón "Aceptar"
+3. Al pulsar "Aceptar", navegar a la pantalla principal
+
+## REGLAS DEL PROYECTO (del AGENTS.md)
+- Prohibido usar emojis en textos
+- Código completo, sin resúmenes
+- Arquitectura MVVM
+
+Por favor, revisa el código, encuentra la causa raíz del error de serialización y arréglalo para que guarde en Supabase y muestre la pantalla de resumen correctamente.

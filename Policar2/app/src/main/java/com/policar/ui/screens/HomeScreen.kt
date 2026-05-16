@@ -29,8 +29,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.SportsSoccer
+import androidx.compose.material.icons.filled.SportsTennis
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sports
 import androidx.compose.material.icons.filled.Storage
@@ -697,13 +699,13 @@ private fun SportCard(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                val iconRes = when (sport) {
-                    TipoDeporte.FUTBOL -> R.drawable.ic_futbol
-                    TipoDeporte.PADEL -> R.drawable.ic_padel
-                    TipoDeporte.GIMNASIO -> R.drawable.ic_gym
+                val sportIcon = when (sport) {
+                    TipoDeporte.FUTBOL -> Icons.Default.SportsSoccer
+                    TipoDeporte.PADEL -> Icons.Default.SportsTennis
+                    TipoDeporte.GIMNASIO -> Icons.Default.FitnessCenter
                 }
                 Icon(
-                    painter = painterResource(id = iconRes),
+                    imageVector = sportIcon,
                     contentDescription = null,
                     tint = if (isSelected) NeonRed else Color.White,
                     modifier = Modifier.size((28 * scaleFactor).dp)
@@ -932,7 +934,7 @@ private fun StartButton(
                     if (enabled) {
                         Icon(
                             imageVector = if (mode == ModoGrabacion.EN_VIVO) Icons.Default.PlayArrow
-                                         else Icons.Default.Mic,
+                                         else Icons.Default.FiberManualRecord,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size((20 * scaleFactor).dp)

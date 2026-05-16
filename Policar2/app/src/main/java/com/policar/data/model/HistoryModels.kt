@@ -2,6 +2,7 @@ package com.policar.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 enum class ViewPeriod(val label: String, val days: Int) {
     WEEK("WEEK", 7),
@@ -11,26 +12,42 @@ enum class ViewPeriod(val label: String, val days: Int) {
 
 @Serializable
 data class TrainingSession(
-    @SerialName("id") val id: String = "",
-    @SerialName("usuario_id") val userId: String = "",
-    @SerialName("device_id") val deviceId: String = "",
-    @SerialName("tipo_deporte") val sportType: String = "",
-    @SerialName("modo_grabacion") val recordingMode: String = "EN_VIVO",
-    @SerialName("fecha_inicio") val startTimestamp: Long = 0L,
-    @SerialName("fecha_fin") val endTimestamp: Long = 0L,
-    @SerialName("duracion_segundos") val durationSeconds: Int = 0,
-    @SerialName("frecuencia_cardiaca_promedio") val hrAvg: Int = 0,
-    @SerialName("frecuencia_cardiaca_max") val hrMax: Int = 0,
-    @SerialName("frecuencia_cardiaca_min") val hrMin: Int = 0,
-    @SerialName("rpe") val rpe: Int = 0,
-    @SerialName("sparkline") val hrSamples: String = "",
-    @SerialName("carga_mecanica_g") val mechanicalLoad: Double = 0.0,
-    @SerialName("impacto_fuerza_g") val impactForceG: Double = 0.0,
-    @SerialName("rotacion_tronco_x") val trunkRotationX: Double = 0.0,
-    @SerialName("rotacion_tronco_y") val trunkRotationY: Double = 0.0,
-    @SerialName("repeticiones") val reps: Int = 0,
-    @SerialName("velocidad_concentrica_promedio") val avgConcentricVelocity: Double = 0.0
-)
+    @SerialName("id")                val id: String = "",
+    @SerialName("device_id")         val deviceId: String = "",
+    @SerialName("sport_type")        val sportType: String = "",
+    @SerialName("start_timestamp")   val startTimestampStr: String = "",
+    @SerialName("end_timestamp")     val endTimestampStr: String = "",
+    @SerialName("duration_seconds")  val durationSeconds: Int = 0,
+    @SerialName("hr_avg")            val hrAvg: Float = 0f,
+    @SerialName("hr_max")            val hrMax: Int = 0,
+    @SerialName("hr_min")            val hrMin: Int = 0,
+    @SerialName("rpe")               val rpe: Int = 0,
+    @SerialName("hrv_rmssd_avg")     val hrvRmssdAvg: Float? = null,
+    @SerialName("hrv_stress_level")  val hrvStressLevel: String? = null,
+    @SerialName("zone1_seconds")     val zone1Seconds: Int = 0,
+    @SerialName("zone2_seconds")     val zone2Seconds: Int = 0,
+    @SerialName("zone3_seconds")     val zone3Seconds: Int = 0,
+    @SerialName("zone4_seconds")     val zone4Seconds: Int = 0,
+    @SerialName("zone5_seconds")     val zone5Seconds: Int = 0,
+    @SerialName("notes")             val notes: String = "",
+    @SerialName("futbol_biomechanics") val futbolBiomechanics: JsonElement? = null,
+    @SerialName("padel_biomechanics")  val padelBiomechanics: JsonElement? = null,
+    @SerialName("gym_biomechanics")    val gymBiomechanics: JsonElement? = null
+) {
+    val startTimestamp: Long get() = parseIsoTimestamp(startTimestampStr)
+    val endTimestamp: Long get() = parseIsoTimestamp(endTimestampStr)
+}
+
+private fun parseIsoTimestamp(str: String): Long {
+    if (str.isBlank()) return 0L
+    return try {
+        java.time.Instant.parse(str).toEpochMilli()
+    } catch (e: Exception) {
+        try {
+            java.time.OffsetDateTime.parse(str).toInstant().toEpochMilli()
+        } catch (e2: Exception) { 0L }
+    }
+}
 
 data class CalendarDay(
     val date: Long,
@@ -116,5 +133,6 @@ data class HistoryUiState(
     val dailyStats: DashboardStats? = null,
     val weeklyStats: DashboardStats? = null,
     val monthlyStats: DashboardStats? = null,
-    val error: String? = null
+    val error: String? = null,
+    val selectedSession: TrainingSession? = null
 )
