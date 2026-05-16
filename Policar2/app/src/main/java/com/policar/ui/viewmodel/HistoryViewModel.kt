@@ -99,7 +99,7 @@ class HistoryViewModel : ViewModel() {
         while (!currentDate.isAfter(endDate)) {
             val sessionsForDay = _uiState.value.sessions.filter { session ->
                 try {
-                    val instant = Instant.parse(session.startTimestamp)
+                    val instant = Instant.ofEpochMilli(session.startTimestamp)
                     val sessionDate = instant.atZone(ZoneId.systemDefault()).toLocalDate()
                     sessionDate == currentDate
                 } catch (e: Exception) {
@@ -155,7 +155,7 @@ class HistoryViewModel : ViewModel() {
 
         return _uiState.value.sessions.filter { session ->
             try {
-                val instant = Instant.parse(session.startTimestamp)
+                val instant = Instant.ofEpochMilli(session.startTimestamp)
                 val sessionDate = instant.atZone(ZoneId.systemDefault()).toLocalDate()
                 sessionDate == targetDate
             } catch (e: Exception) {
@@ -183,9 +183,9 @@ class HistoryViewModel : ViewModel() {
         }
     }
 
-    fun formatTime(timestamp: String): String {
+    fun formatTime(timestamp: Long): String {
         return try {
-            val instant = Instant.parse(timestamp)
+            val instant = Instant.ofEpochMilli(timestamp)
             val formatter = DateTimeFormatter.ofPattern("HH:mm")
             instant.atZone(ZoneId.systemDefault()).format(formatter)
         } catch (e: Exception) {
@@ -193,9 +193,9 @@ class HistoryViewModel : ViewModel() {
         }
     }
 
-    fun formatDateFull(timestamp: String): String {
+    fun formatDateFull(timestamp: Long): String {
         return try {
-            val instant = Instant.parse(timestamp)
+            val instant = Instant.ofEpochMilli(timestamp)
             val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
             instant.atZone(ZoneId.systemDefault()).format(formatter)
         } catch (e: Exception) {
@@ -203,7 +203,7 @@ class HistoryViewModel : ViewModel() {
         }
     }
 
-    fun deleteSession(sessionId: Long) {
+    fun deleteSession(sessionId: String) {
         viewModelScope.launch {
             val result = repository.deleteSession(sessionId)
             result.fold(

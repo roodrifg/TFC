@@ -77,6 +77,7 @@ fun HistoryScreen(
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(100)
         showContent = true
+        viewModel.setUserId("demo_user")
     }
 
     Box(
@@ -230,7 +231,7 @@ fun HistoryScreen(
                                 session = session,
                                 onDelete = { viewModel.deleteSession(session.id) },
                                 formatDuration = { viewModel.formatDuration(it) },
-                                formatTime = { viewModel.formatTime(it) }
+                                formatTime = { viewModel.formatTime(session.startTimestamp) }
                             )
                         }
                     }
@@ -247,7 +248,7 @@ private fun SessionCard(
     session: TrainingSession,
     onDelete: () -> Unit,
     formatDuration: (Int) -> String,
-    formatTime: (String) -> String
+    formatTime: (Long) -> String
 ) {
     val sportColor = when (session.sportType.lowercase()) {
         "futbol" -> SportFutbol

@@ -24,7 +24,7 @@ class HistoryRepository {
 
     suspend fun fetchSessions(userId: String, limit: Int = 100): Result<List<TrainingSession>> = withContext(Dispatchers.IO) {
         try {
-            val response = supabase.postgrest["sessions"]
+            val response = supabase.postgrest["entrenamientos"]
                 .select()
             val allSessions = response.decodeList<TrainingSession>()
             val filtered = allSessions.filter { session -> session.userId == userId }
@@ -40,15 +40,15 @@ class HistoryRepository {
         endDate: String
     ): Result<List<TrainingSession>> = withContext(Dispatchers.IO) {
         try {
-            val response = supabase.postgrest["sessions"]
+            val response = supabase.postgrest["entrenamientos"]
                 .select()
             val allSessions = response.decodeList<TrainingSession>()
             val start = LocalDate.parse(startDate.substringBefore("T"))
             val end = LocalDate.parse(endDate.substringBefore("T"))
             val filtered = allSessions.filter { session ->
                 session.userId == userId && try {
-                    val instant = Instant.parse(session.startTimestamp)
-                    val sessionDate = instant.atZone(ZoneId.systemDefault()).toLocalDate()
+                    val sessionDate = Instant.ofEpochMilli(session.startTimestamp)
+                        .atZone(ZoneId.systemDefault()).toLocalDate()
                     !sessionDate.isBefore(start) && !sessionDate.isAfter(end)
                 } catch (e: Exception) {
                     false
@@ -182,8 +182,8 @@ class HistoryRepository {
             var totalImpacts = 0
             for (session in sessions) {
                 try {
-                    if (session.futbolBiomechanics.isNotBlank()) {
-                        totalImpacts += json.decodeFromString<FutbolBiomechanics>(session.futbolBiomechanics).totalImpacts
+                    if (session.sportType == "FUTBOL" && session.impactForceG > 0) {
+                        totalImpacts++
                     }
                 } catch (e: Exception) { }
             }
@@ -191,8 +191,8 @@ class HistoryRepository {
             var totalSmashes = 0
             for (session in sessions) {
                 try {
-                    if (session.padelBiomechanics.isNotBlank()) {
-                        totalSmashes += json.decodeFromString<PadelBiomechanics>(session.padelBiomechanics).totalSmashes
+                    if (session.sportType == "PADEL" && session.trunkRotationX > 0) {
+                        totalSmashes++
                     }
                 } catch (e: Exception) { }
             }
@@ -200,8 +200,8 @@ class HistoryRepository {
             var totalReps = 0
             for (session in sessions) {
                 try {
-                    if (session.gymBiomechanics.isNotBlank()) {
-                        totalReps += json.decodeFromString<GymBiomechanics>(session.gymBiomechanics).totalReps
+                    if (session.sportType == "GIMNASIO" && session.reps > 0) {
+                        totalReps += session.reps
                     }
                 } catch (e: Exception) { }
             }
@@ -240,7 +240,7 @@ class HistoryRepository {
     private fun calculateWeeklyVolumes(sessions: List<TrainingSession>): List<DailyVolume> {
         val dailyGroups = sessions.groupBy { session ->
             try {
-                val instant = Instant.parse(session.startTimestamp)
+                val instant = Instant.ofEpochMilli(session.startTimestamp)
                 instant.atZone(ZoneId.systemDefault()).toLocalDate()
             } catch (e: Exception) {
                 LocalDate.now()
@@ -287,7 +287,7 @@ class HistoryRepository {
 
         val sessionDates = sessions.mapNotNull { session ->
             try {
-                val instant = Instant.parse(session.startTimestamp)
+                val instant = Instant.ofEpochMilli(session.startTimestamp)
                 instant.atZone(ZoneId.systemDefault()).toLocalDate()
             } catch (e: Exception) {
                 null
@@ -316,7 +316,7 @@ class HistoryRepository {
 
         val sessionDates = sessions.mapNotNull { session ->
             try {
-                val instant = Instant.parse(session.startTimestamp)
+                val instant = Instant.ofEpochMilli(session.startTimestamp)
                 instant.atZone(ZoneId.systemDefault()).toLocalDate()
             } catch (e: Exception) {
                 null
@@ -341,9 +341,8 @@ class HistoryRepository {
         return longestStreak
     }
 
-    suspend fun deleteSession(sessionId: Long): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun deleteSession(sessionId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            supabase.postgrest["sessions"].delete()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

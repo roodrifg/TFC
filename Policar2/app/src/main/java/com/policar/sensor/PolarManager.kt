@@ -24,6 +24,7 @@ import com.polar.sdk.api.model.PolarExerciseEntry
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,6 +111,10 @@ class PolarManager(private val context: Context) {
     private val gymRepsList = mutableListOf<GymRepData>()
     private var firstRepVelForLoss = 0f
     private var currentExerciseId = ""
+    private var isInFlight = false
+    private var flightStartTime = 0L
+    private var lastFlightDurationMs = 0L
+    private var searchJob: Job? = null
 
     init {
         api.setApiCallback(object : PolarBleApiCallback() {
@@ -166,7 +171,7 @@ class PolarManager(private val context: Context) {
         _discoveredDevices.value = emptyList()
         _connectionState.value = ConnectionState.Scanning
         api.setAutomaticReconnection(true)
-        scope.launch {
+        searchJob = scope.launch {
             try {
                 api.searchForDevice().collect { device ->
                     _discoveredDevices.update { current ->
@@ -186,6 +191,8 @@ class PolarManager(private val context: Context) {
     }
 
     fun stopDeviceSearch() {
+        searchJob?.cancel()
+        searchJob = null
         _isSearching.value = false
         if (_connectionState.value is ConnectionState.Scanning) _connectionState.value = ConnectionState.Disconnected
     }
@@ -294,10 +301,20 @@ class PolarManager(private val context: Context) {
                 TipoDeporte.FUTBOL -> {
                     val mag = sqrt(x * x + y * y + z * z) / 1000.0
                     currentMechLoad += mag * 0.005
-                    if (mag > 4.5) {
+
+                    val isCurrentlyInFlight = mag < 0.3
+                    if (isCurrentlyInFlight && !isInFlight) {
+                        isInFlight = true
+                        flightStartTime = System.currentTimeMillis()
+                    } else if (!isCurrentlyInFlight && isInFlight) {
+                        lastFlightDurationMs = System.currentTimeMillis() - flightStartTime
+                        isInFlight = false
+                    }
+
+                    if (mag > 8.0 && lastFlightDurationMs > 100) {
                         gPeaksHistory.add(mag)
                         if (gPeaksHistory.size > 30) gPeaksHistory.removeAt(0)
-                        val highImpacts = gPeaksHistory.count { it > 6.0 }.toInt()
+                        val highImpacts = gPeaksHistory.count { it > 10.0 }.toInt()
                         val maxG = gPeaksHistory.maxOrNull()?.toFloat() ?: 0f
                         val avgG = gPeaksHistory.average().toFloat()
                         val cardioLoad = (_hrValue.value.toFloat() / 190f) * 100f
@@ -308,9 +325,11 @@ class PolarManager(private val context: Context) {
                             avgGForce = avgG,
                             mechanicalLoadScore = currentMechLoad.toFloat(),
                             cardiovascularLoadScore = cardioLoad,
-                            loadRatio = if (cardioLoad > 0) currentMechLoad.toFloat() / cardioLoad else 0f
+                            loadRatio = if (cardioLoad > 0) currentMechLoad.toFloat() / cardioLoad else 0f,
+                            flightTimeMs = lastFlightDurationMs
                         )
                         _biomechanics.update { it.copy(impacto_fuerza_g = mag, carga_mecanica_g = currentMechLoad, picos_g_history = gPeaksHistory.toList()) }
+                        lastFlightDurationMs = 0L
                     }
                 }
                 TipoDeporte.PADEL -> {
@@ -466,6 +485,7 @@ class PolarManager(private val context: Context) {
         rrIntervals.clear(); hrHistoryList.clear(); gymRepsList.clear(); gPeaksHistory.clear()
         repCount = 0; firstRepVelocity = 0.0; firstRepVelForLoss = 0f; currentMechLoad = 0.0
         isConcentricPhase = false; concentricStart = 0L; smashCount = 0; lastSmashTime = 0L
+        isInFlight = false; flightStartTime = 0L; lastFlightDurationMs = 0L
         _biomechanics.value = DatosBiomecanicos(deporte.displayName)
         _futbolBio.value = FutbolBiomechanics()
         _padelBio.value = PadelBiomechanics()

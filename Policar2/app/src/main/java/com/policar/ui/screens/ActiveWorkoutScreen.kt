@@ -91,19 +91,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
-import com.polar.sdk.api.model.PolarAccelerometerData
 import com.policar.MainActivity
+import com.policar.NavRoutes
 import com.policar.R
 import com.policar.data.model.FutbolBiomechanics
 import com.policar.data.model.GymBiomechanics
 import com.policar.data.model.GymRepData
 import com.policar.data.model.HRZone
 import com.policar.data.model.PadelBiomechanics
-import com.policar.data.model.SesionActiva
 import com.policar.data.model.StressLevel
-import com.policar.data.model.SyncState
-import com.policar.data.model.TelemetryData
 import com.policar.data.model.TipoDeporte
+import com.policar.data.model.WorkoutSummary
 import com.policar.ui.screens.GlassCard
 import com.policar.ui.screens.GlassContainer
 import com.policar.ui.theme.BackgroundPure
@@ -129,11 +127,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  POLICAR — ACTIVE WORKOUT SCREEN (HUD TÁCTICO)
-//  ECG Canvas 60fps · BPM Glow · Biomecánica por deporte · Sparkline
-// ═══════════════════════════════════════════════════════════════════════════════
 
 private fun computeHrZone(hr: Int): HRZone = when {
     hr == 0 -> HRZone.ZONE_1
@@ -161,7 +154,6 @@ fun ActiveWorkoutScreen(
     val haptic      = LocalHapticFeedback.current
     val context     = LocalContext.current
 
-    // ── Keep Screen On ─────────────────────────────────────────────────
     DisposableEffect(Unit) {
         (context as? MainActivity)?.setKeepScreenOn(true)
         onDispose {
@@ -169,115 +161,109 @@ fun ActiveWorkoutScreen(
         }
     }
 
-    // ── Dialogs state ──────────────────────────────────────────────────
     var showStopDialog  by remember { mutableStateOf(false) }
     var showRpeDialog   by remember { mutableStateOf(false) }
     var selectedRpe     by remember { mutableStateOf(5) }
+    var showSuccessScreen by remember { mutableStateOf(false) }
 
-    // ── Saved → navegar atrás ──────────────────────────────────────────
-    LaunchedEffect(uiState.savedSuccessfully) {
-        if (uiState.savedSuccessfully) {
-            navController.popBackStack()
+    LaunchedEffect(uiState.savedSuccessfully, uiState.savedWorkoutSummary) {
+        if (uiState.savedSuccessfully && uiState.savedWorkoutSummary != null) {
+            showSuccessScreen = true
         }
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  ROOT
-    // ─────────────────────────────────────────────────────────────────
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(BackgroundPure)
     ) {
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-        ) {
-
-            // ── TOP BAR ─────────────────────────────────────────────
-            WorkoutTopBar(
-                sport          = viewModel.selectedSport,
-                elapsedSeconds = uiState.duracion_segundos,
-                isPaused       = uiState.isPaused,
-                batteryLevel   = viewModel.batteryLevel,
-                onPauseResume  = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    if (uiState.isPaused) viewModel.resumeWorkout()
-                    else viewModel.pauseWorkout()
-                },
-                onStop = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    showStopDialog = true
+        if (showSuccessScreen && uiState.savedWorkoutSummary != null) {
+            WorkoutSavedScreen(
+                summary = uiState.savedWorkoutSummary!!,
+                onExit = {
+                    showSuccessScreen = false
+                    viewModel.resetWorkout()
+                    navController.popBackStack(NavRoutes.HOME, inclusive = false)
                 }
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // ── BPM HERO — Display principal con Glow rítmico ────────
-            BpmHeroSection(
-                heartRate = heartRate,
-                hrZone    = computeHrZone(heartRate),
-                rmssd     = hrvStress.toFloat(),
-                rrMs      = hrvStress.toLong()
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ── HRV PANEL ─────────────────────────────────────────────
-            HrvPanel(
-                rmssd       = viewModel.telemetry.rmssd.toFloat(),
-                stressLevel = StressLevel.LOW,
-                rrInterval  = viewModel.telemetry.rrInterval.toLong()
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ── BIOMECÁNICA SEGÚN DEPORTE ─────────────────────────────
-            when (viewModel.selectedSport) {
-                TipoDeporte.FUTBOL -> FutbolBiomechanicsPanel(
-                    data = futbolBio,
-                    currentGForce = futbolBio.maxGForce,
-                    isImpact = futbolBio.avgGForce > 2.0f
-                )
-                TipoDeporte.PADEL -> PadelBiomechanicsPanel(
-                    data = padelBio,
-                    currentX = 0,
-                    currentY = padelBio.maxRotationDps.toInt()
-                )
-                TipoDeporte.GIMNASIO -> GymBiomechanicsPanel(
-                    data = gymBio,
-                    velocityAlert = gymBio.velocityLossPct > 20f
-                )
-            }
-
-            Spacer(modifier = Modifier.height(40.dp))
-        }
-
-        // ── Saving overlay ─────────────────────────────────────────────
-        if (uiState.syncState.isInProgress) {
-            Box(
+        } else {
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.7f)),
-                contentAlignment = Alignment.Center
+                    .verticalScroll(rememberScrollState())
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = NeonRed)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Guardando en la nube…", color = TextPrimary, fontWeight = FontWeight.Medium)
+                WorkoutTopBar(
+                    sport          = viewModel.selectedSport,
+                    elapsedSeconds = uiState.elapsedSeconds,
+                    isPaused       = uiState.isPaused,
+                    batteryLevel   = viewModel.batteryLevel,
+                    onPauseResume  = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (uiState.isPaused) viewModel.resumeWorkout()
+                        else viewModel.pauseWorkout()
+                    },
+                    onStop = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        showStopDialog = true
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                BpmHeroSection(
+                    heartRate = heartRate,
+                    hrZone    = computeHrZone(heartRate),
+                    rmssd     = hrvStress.toFloat(),
+                    rrMs      = hrvStress.toLong()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                HrvPanel(
+                    rmssd       = viewModel.telemetry.rmssd.toFloat(),
+                    stressLevel = StressLevel.LOW,
+                    rrInterval  = viewModel.telemetry.rrInterval.toLong()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                when (viewModel.selectedSport) {
+                    TipoDeporte.FUTBOL -> FutbolBiomechanicsPanel(
+                        data = futbolBio,
+                        currentGForce = futbolBio.maxGForce,
+                        isImpact = futbolBio.avgGForce > 2.0f
+                    )
+                    TipoDeporte.PADEL -> PadelBiomechanicsPanel(
+                        data = padelBio,
+                        currentX = 0,
+                        currentY = padelBio.maxRotationDps.toInt()
+                    )
+                    TipoDeporte.GIMNASIO -> GymBiomechanicsPanel(
+                        data = gymBio,
+                        velocityAlert = gymBio.velocityLossPct > 20f
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(40.dp))
+            }
+
+            if (uiState.syncState.toString() == "UPLOADING" || uiState.syncState.toString() == "DOWNLOADING") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.7f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = NeonRed)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Guardando en la nube…", color = TextPrimary, fontWeight = FontWeight.Medium)
+                    }
                 }
             }
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    //  DIALOGS
-    // ─────────────────────────────────────────────────────────────────
-
-    // Stop Confirmation Dialog
     if (showStopDialog) {
         AlertDialog(
             onDismissRequest  = { showStopDialog = false },
@@ -294,7 +280,6 @@ fun ActiveWorkoutScreen(
                 Button(
                     onClick = {
                         showStopDialog = false
-                        viewModel.stopWorkout()
                         showRpeDialog  = true
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = NeonRed)
@@ -310,7 +295,6 @@ fun ActiveWorkoutScreen(
         )
     }
 
-    // RPE Dialog — Escala de esfuerzo percibido CR10 de Borg
     if (showRpeDialog) {
         RpeDialog(
             selectedRpe   = selectedRpe,
@@ -328,9 +312,190 @@ fun ActiveWorkoutScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  TOP BAR — Deporte · Cronómetro · Controles
-// ─────────────────────────────────────────────────────────────────────────
+@Composable
+private fun WorkoutSavedScreen(
+    summary: WorkoutSummary,
+    onExit: () -> Unit
+) {
+    val sportIcon = when (summary.sportType.uppercase()) {
+        "FUTBOL" -> R.drawable.ic_futbol
+        "PADEL" -> R.drawable.ic_padel
+        "GIMNASIO" -> R.drawable.ic_gym
+        else -> R.drawable.ic_gym
+    }
+
+    val sportColor = when (summary.sportType.uppercase()) {
+        "FUTBOL" -> SportFutbol
+        "PADEL" -> SportPadel
+        "GIMNASIO" -> SportGym
+        else -> NeonCyan
+    }
+
+    val sportLabel = when (summary.sportType.uppercase()) {
+        "FUTBOL" -> "Futbol"
+        "PADEL" -> "Padel"
+        "GIMNASIO" -> "Gimnasio"
+        else -> summary.sportType
+    }
+
+    val dateFormatter = java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.getDefault())
+    val timeFormatter = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    val startDateStr = dateFormatter.format(java.util.Date(summary.startTime))
+    val startTimeStr = timeFormatter.format(java.util.Date(summary.startTime))
+    val endDateStr = dateFormatter.format(java.util.Date(summary.endTime))
+    val endTimeStr = timeFormatter.format(java.util.Date(summary.endTime))
+
+    val hours = summary.durationSeconds / 3600
+    val minutes = (summary.durationSeconds % 3600) / 60
+    val seconds = summary.durationSeconds % 60
+    val durationStr = if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFF030303), Color(0xFF0A0A0A))
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .background(sportColor.copy(alpha = 0.2f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(sportIcon),
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = sportColor
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "Entrenamiento_finalizado",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Subido correctamente a Supabase",
+                fontSize = 16.sp,
+                color = NeonGreen,
+                fontFamily = FontFamily.Monospace
+            )
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SurfaceCard.copy(alpha = 0.5f))
+                    .border(1.dp, BorderSubtle, RoundedCornerShape(16.dp))
+                    .padding(24.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = sportLabel,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = sportColor,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "Fecha inicio", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = startDateStr, fontSize = 14.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "Hora inicio", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = startTimeStr, fontSize = 14.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "Fecha fin", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = endDateStr, fontSize = 14.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "Hora fin", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = endTimeStr, fontSize = 14.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "Deporte", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = sportLabel, fontSize = 14.sp, color = sportColor, fontFamily = FontFamily.Monospace)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "Duracion", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = durationStr, fontSize = 14.sp, color = TextPrimary, fontFamily = FontFamily.Monospace)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(text = "FC Max", fontSize = 11.sp, color = TextTertiary)
+                            Text(text = "${summary.maxHr} bpm", fontSize = 14.sp, color = NeonRed, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            Button(
+                onClick = onExit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = NeonRed),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    text = "Aceptar",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun WorkoutTopBar(
@@ -358,7 +523,6 @@ private fun WorkoutTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Deporte
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = sport.displayName.take(1), fontSize = 20.sp)
             Spacer(modifier = Modifier.width(8.dp))
@@ -378,7 +542,6 @@ private fun WorkoutTopBar(
             }
         }
 
-        // Cronómetro
         AnimatedContent(
             targetState   = timeStr,
             transitionSpec = {
@@ -396,7 +559,6 @@ private fun WorkoutTopBar(
             )
         }
 
-        // Controles
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton(
                 onClick  = onPauseResume,
@@ -430,10 +592,6 @@ private fun WorkoutTopBar(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  BPM HERO SECTION — Número principal con Glow rítmico (late con el pulso)
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
 private fun BpmHeroSection(
     heartRate: Int,
@@ -449,7 +607,6 @@ private fun BpmHeroSection(
         HRZone.ZONE_5 -> StatusDanger
     }
 
-    // BPM latido: la frecuencia del glow se sincroniza con el RR interval
     val beatDurationMs = if (rrMs > 0) rrMs.toInt() else 800
     val infiniteTransition = rememberInfiniteTransition(label = "bpm_glow")
     val glowRadius by infiniteTransition.animateFloat(
@@ -476,7 +633,6 @@ private fun BpmHeroSection(
         modifier = Modifier.fillMaxWidth()
     ) {
         Box(contentAlignment = Alignment.Center) {
-            // Glow externo
             Box(
                 modifier = Modifier
                     .size(220.dp)
@@ -490,16 +646,11 @@ private fun BpmHeroSection(
                     .blur(40.dp)
             )
 
-            // BPM animado (odómetro via AnimatedContent)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.scale(beatScale)
             ) {
-                Text(
-                    text       = "BPM",
-                    fontSize   = 14.sp,
-                    color      = zoneColor.copy(alpha = 0.8f)
-                )
+                Text(text = "BPM", fontSize = 14.sp, color = zoneColor.copy(alpha = 0.8f))
                 AnimatedContent(
                     targetState = heartRate,
                     transitionSpec = {
@@ -522,169 +673,21 @@ private fun BpmHeroSection(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text       = "BPM",
-                        fontWeight = FontWeight.Bold,
-                        fontSize   = 12.sp,
-                        color      = zoneColor,
-                        letterSpacing = 3.sp
-                    )
+                    Text(text = "BPM", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = zoneColor, letterSpacing = 3.sp)
                     Spacer(modifier = Modifier.width(12.dp))
-                    // Badge de zona HR
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .background(zoneColor.copy(alpha = 0.15f))
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
-                        Text(
-                            text      = hrZone.label.uppercase(),
-                            fontSize  = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color     = zoneColor,
-                            letterSpacing = 1.sp
-                        )
+                        Text(text = hrZone.label.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = zoneColor, letterSpacing = 1.sp)
                     }
                 }
             }
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-//  ECG CANVAS SECTION — Onda ECG dibujada a 60fps
-// ─────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun EcgSection(ecgBuffer: List<Float>) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 8.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .background(NeonCyan, CircleShape)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text      = "ECG · 130 Hz",
-                fontSize  = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color     = NeonCyan,
-                letterSpacing = 1.sp
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(110.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(SurfaceDark)
-                .border(1.dp, NeonCyan.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-        ) {
-            // Grid de fondo
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val gridColor = Color(0xFF1A2A2A)
-                val stepX = size.width / 10f
-                val stepY = size.height / 4f
-
-                // Líneas verticales
-                for (i in 0..10) {
-                    drawLine(
-                        color       = gridColor,
-                        start       = Offset(i * stepX, 0f),
-                        end         = Offset(i * stepX, size.height),
-                        strokeWidth = 0.5f
-                    )
-                }
-                // Líneas horizontales
-                for (i in 0..4) {
-                    drawLine(
-                        color       = gridColor,
-                        start       = Offset(0f, i * stepY),
-                        end         = Offset(size.width, i * stepY),
-                        strokeWidth = 0.5f
-                    )
-                }
-                // Línea de referencia central
-                drawLine(
-                    color       = NeonCyan.copy(alpha = 0.08f),
-                    start       = Offset(0f, size.height / 2f),
-                    end         = Offset(size.width, size.height / 2f),
-                    strokeWidth = 1f
-                )
-            }
-
-            // Traza ECG
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                if (ecgBuffer.size < 2) return@Canvas
-
-                val w = size.width
-                val h = size.height
-                val margin = h * 0.1f
-
-                // Normalizar muestras al rango visible
-                val minVal = ecgBuffer.minOrNull() ?: -500f
-                val maxVal = ecgBuffer.maxOrNull() ?: 500f
-                val range  = maxOf(maxVal - minVal, 1f)
-
-                val path = Path()
-                val step = w / (ecgBuffer.size - 1).toFloat()
-
-                ecgBuffer.forEachIndexed { i, voltage ->
-                    val x = i * step
-                    val normalized = (voltage - minVal) / range
-                    val y = h - margin - (normalized * (h - margin * 2f))
-
-                    if (i == 0) path.moveTo(x, y)
-                    else        path.lineTo(x, y)
-                }
-
-                // Glow de la traza (capas múltiples de menor alpha)
-                drawPath(
-                    path        = path,
-                    color       = NeonCyan.copy(alpha = 0.15f),
-                    style       = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
-                )
-                drawPath(
-                    path        = path,
-                    color       = NeonCyan.copy(alpha = 0.4f),
-                    style       = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
-                )
-                // Línea principal brillante
-                drawPath(
-                    path        = path,
-                    color       = NeonCyan,
-                    style       = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
-                )
-
-                // Punto de escritura actual (cabeza del trazo)
-                if (ecgBuffer.isNotEmpty()) {
-                    val lastIdx = ecgBuffer.size - 1
-                    val lastX   = lastIdx * step
-                    val lastNorm = (ecgBuffer.last() - minVal) / range
-                    val lastY   = h - margin - (lastNorm * (h - margin * 2f))
-                    drawCircle(
-                        color  = Color.White,
-                        radius = 3.dp.toPx(),
-                        center = Offset(lastX, lastY)
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-//  HRV PANEL — RMSSD, estrés sistémico, RR interval
-// ─────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun HrvPanel(
@@ -704,256 +707,91 @@ private fun HrvPanel(
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // RMSSD
-        MetricCard(
-            modifier = Modifier.weight(1f),
-            label    = "HRV RMSSD",
-            value    = "${"%.0f".format(rmssd)}",
-            unit     = "ms",
-            color    = NeonCyan,
-            icon     = "HRV"
-        )
-        // Estrés
-        MetricCard(
-            modifier = Modifier.weight(1f),
-            label    = "ESTRÉS",
-            value    = stressLevel.label,
-            unit     = "",
-            color    = stressColor,
-            icon     = if (stressLevel.ordinal < 2) "OK" else "ALERT"
-        )
-        // R-R Interval
-        MetricCard(
-            modifier = Modifier.weight(1f),
-            label    = "R-R",
-            value    = "$rrInterval",
-            unit     = "ms",
-            color    = TextSecondary,
-            icon     = "RR"
-        )
+        MetricCard(modifier = Modifier.weight(1f), label = "HRV RMSSD", value = "${"%.0f".format(rmssd)}", unit = "ms", color = NeonCyan, icon = "HRV")
+        MetricCard(modifier = Modifier.weight(1f), label = "ESTRÉS", value = stressLevel.label, unit = "", color = stressColor, icon = if (stressLevel.ordinal < 2) "OK" else "ALERT")
+        MetricCard(modifier = Modifier.weight(1f), label = "R-R", value = "$rrInterval", unit = "ms", color = TextSecondary, icon = "RR")
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  BIOMECÁNICA — FÚTBOL
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
-private fun FutbolBiomechanicsPanel(
-    data: FutbolBiomechanics,
-    currentGForce: Float,
-    isImpact: Boolean
-) {
+private fun FutbolBiomechanicsPanel(data: FutbolBiomechanics, currentGForce: Float, isImpact: Boolean) {
     val infiniteTransition = rememberInfiniteTransition(label = "impact")
-    val impactAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.4f,
-        targetValue  = 1f,
-        animationSpec = infiniteRepeatable(tween(300), RepeatMode.Reverse),
-        label = "impact_alpha"
-    )
+    val impactAlpha by infiniteTransition.animateFloat(initialValue = 0.4f, targetValue = 1f, animationSpec = infiniteRepeatable(tween(300), RepeatMode.Reverse), label = "impact_alpha")
 
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         SectionHeader(icon = "FOOTBALL", title = "BIOMECHANICS · FOOTBALL", color = SportFutbol)
         Spacer(modifier = Modifier.height(10.dp))
 
-        // G-Force en tiempo real
         GlassCard {
             Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text      = "FUERZA G ACTUAL",
-                        fontSize  = 10.sp,
-                        color     = TextTertiary,
-                        letterSpacing = 1.sp
-                    )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "FUERZA G ACTUAL", fontSize = 10.sp, color = TextTertiary, letterSpacing = 1.sp)
                     if (isImpact) {
-                        Box(
-                            modifier = Modifier
-                                .alpha(impactAlpha)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(StatusDanger.copy(alpha = 0.2f))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text     = "IMPACT",
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                color    = StatusDanger,
-                                letterSpacing = 1.sp
-                            )
+                        Box(modifier = Modifier.alpha(impactAlpha).clip(RoundedCornerShape(4.dp)).background(StatusDanger.copy(alpha = 0.2f)).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                            Text(text = "IMPACT", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = StatusDanger, letterSpacing = 1.sp)
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-
-                // Barra de G-Force
-                val gNormalized = min(currentGForce / 8f, 1f)
-                Text(
-                    text       = "${"%.2f".format(currentGForce)} G",
-                    fontWeight = FontWeight.Black,
-                    fontSize   = 32.sp,
-                    color      = if (isImpact) StatusDanger else SportFutbol
-                )
+                Text(text = "${"%.2f".format(currentGForce)} G", fontWeight = FontWeight.Black, fontSize = 32.sp, color = if (isImpact) StatusDanger else SportFutbol)
                 Spacer(modifier = Modifier.height(8.dp))
-                GForceBar(normalized = gNormalized)
+                GForceBar(normalized = min(currentGForce / 8f, 1f))
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "IMPACTOS",
-                value    = "${data.totalImpacts}",
-                unit     = "",
-                color    = SportFutbol,
-                icon     = "IMPACT"
-            )
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "ALTA INTENSIDAD",
-                value    = "${data.highIntensityImpacts}",
-                unit     = ">3G",
-                color    = StatusDanger,
-                icon     = "HIR"
-            )
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "G MAX",
-                value    = "${"%.1f".format(data.maxGForce)}",
-                unit     = "G",
-                color    = NeonYellow,
-                icon     = "GMAX"
-            )
+            MetricCard(modifier = Modifier.weight(1f), label = "IMPACTOS", value = "${data.totalImpacts}", unit = "", color = SportFutbol, icon = "IMPACT")
+            MetricCard(modifier = Modifier.weight(1f), label = "ALTA INTENSIDAD", value = "${data.highIntensityImpacts}", unit = ">3G", color = StatusDanger, icon = "HIR")
+            MetricCard(modifier = Modifier.weight(1f), label = "G MAX", value = "${"%.1f".format(data.maxGForce)}", unit = "G", color = NeonYellow, icon = "GMAX")
         }
 
         Spacer(modifier = Modifier.height(10.dp))
-
-        // Ratio Mecánica / Cardio
         GlassCard {
             Column(modifier = Modifier.padding(14.dp)) {
-                Text(
-                    text     = "BALANCE DE CARGA",
-                    fontSize = 10.sp,
-                    color    = TextTertiary,
-                    letterSpacing = 1.sp
-                )
+                Text(text = "BALANCE DE CARGA", fontSize = 10.sp, color = TextTertiary, letterSpacing = 1.sp)
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    LoadBar(
-                        label     = "Mecánica",
-                        value     = data.mechanicalLoadScore,
-                        maxValue  = 10f,
-                        color     = SportFutbol,
-                        modifier  = Modifier.weight(1f)
-                    )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    LoadBar(label = "Mecánica", value = data.mechanicalLoadScore, maxValue = 10f, color = SportFutbol, modifier = Modifier.weight(1f))
                     Spacer(modifier = Modifier.width(16.dp))
-                    LoadBar(
-                        label     = "Cardiovascular",
-                        value     = data.cardiovascularLoadScore,
-                        maxValue  = 100f,
-                        color     = NeonRed,
-                        modifier  = Modifier.weight(1f)
-                    )
+                    LoadBar(label = "Cardiovascular", value = data.cardiovascularLoadScore, maxValue = 100f, color = NeonRed, modifier = Modifier.weight(1f))
                 }
             }
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  BIOMECÁNICA — PÁDEL
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
-private fun PadelBiomechanicsPanel(
-    data: PadelBiomechanics,
-    currentX: Int,
-    currentY: Int
-) {
+private fun PadelBiomechanicsPanel(data: PadelBiomechanics, currentX: Int, currentY: Int) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         SectionHeader(icon = "PADEL", title = "BIOMECHANICS · PADEL", color = SportPadel)
         Spacer(modifier = Modifier.height(10.dp))
-
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "SMASHES",
-                value    = "${data.totalSmashes}",
-                unit     = "",
-                color    = SportPadel,
-                icon     = "PADEL"
-            )
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "ROT. PICO",
-                value    = "${"%.0f".format(data.maxRotationDps)}",
-                unit     = "deg/s",
-                color    = NeonCyan,
-                icon     = "ROT"
-            )
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "ASIMETRIA",
-                value    = "${"%.0f".format(data.asymmetryScore * 100)}",
-                unit     = "%",
-                color    = if (data.asymmetryScore < 0.2f) NeonGreen else NeonYellow,
-                icon     = "ASYMM"
-            )
+            MetricCard(modifier = Modifier.weight(1f), label = "SMASHES", value = "${data.totalSmashes}", unit = "", color = SportPadel, icon = "PADEL")
+            MetricCard(modifier = Modifier.weight(1f), label = "ROT. PICO", value = "${"%.0f".format(data.maxRotationDps)}", unit = "deg/s", color = NeonCyan, icon = "ROT")
+            MetricCard(modifier = Modifier.weight(1f), label = "ASIMETRIA", value = "${"%.0f".format(data.asymmetryScore * 100)}", unit = "%", color = if (data.asymmetryScore < 0.2f) NeonGreen else NeonYellow, icon = "ASYMM")
         }
-
         Spacer(modifier = Modifier.height(10.dp))
-
-        // Visualizador de rotación X/Y en tiempo real
         GlassCard {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text     = "ROTACIÓN DE TRONCO (X/Y)",
-                    fontSize = 10.sp,
-                    color    = TextTertiary,
-                    letterSpacing = 1.sp
-                )
+                Text(text = "ROTACIÓN DE TRONCO (X/Y)", fontSize = 10.sp, color = TextTertiary, letterSpacing = 1.sp)
                 Spacer(modifier = Modifier.height(10.dp))
-
-                // Indicadores X e Y con barras
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("EJE X", fontSize = 9.sp, color = NeonCyan)
                             Text("${currentX} mG", fontSize = 9.sp, color = TextSecondary)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
-                        AxisBar(
-                            value = currentX,
-                            max   = 3000,
-                            color = NeonCyan
-                        )
+                        AxisBar(value = currentX, max = 3000, color = NeonCyan)
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("EJE Y", fontSize = 9.sp, color = SportPadel)
                             Text("${currentY} mG", fontSize = 9.sp, color = TextSecondary)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
-                        AxisBar(
-                            value = currentY,
-                            max   = 3000,
-                            color = SportPadel
-                        )
+                        AxisBar(value = currentY, max = 3000, color = SportPadel)
                     }
                 }
             }
@@ -961,86 +799,32 @@ private fun PadelBiomechanicsPanel(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  BIOMECÁNICA — GIMNASIO
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
-private fun GymBiomechanicsPanel(
-    data: GymBiomechanics,
-    velocityAlert: Boolean
-) {
+private fun GymBiomechanicsPanel(data: GymBiomechanics, velocityAlert: Boolean) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         SectionHeader(icon = "GYM", title = "BIOMECHANICS · GYM", color = SportGym)
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Alerta de velocidad caída >20%
         AnimatedVisibility(visible = velocityAlert) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(StatusDanger.copy(alpha = 0.12f))
-                    .border(1.dp, StatusDanger.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint     = StatusDanger,
-                    modifier = Modifier.size(16.dp)
-                )
+            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(StatusDanger.copy(alpha = 0.12f)).border(1.dp, StatusDanger.copy(alpha = 0.3f), RoundedCornerShape(10.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = StatusDanger, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text  = "⚠ Velocidad concéntrica -${
-                        "%.0f".format(data.velocityLossPct)
-                    }% · Considera descanso",
-                    fontSize = 12.sp,
-                    color    = StatusDanger,
-                    fontWeight = FontWeight.Medium
-                )
+                Text(text = "Velocidad concéntrica -${"%.0f".format(data.velocityLossPct)}%", fontSize = 12.sp, color = StatusDanger, fontWeight = FontWeight.Medium)
             }
             Spacer(modifier = Modifier.height(10.dp))
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "REPS",
-                value    = "${data.totalReps}",
-                unit     = "",
-                color    = SportGym,
-                icon     = "REPS"
-            )
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "SERIES",
-                value    = "${data.totalSets}",
-                unit     = "",
-                color    = NeonYellow,
-                icon     = "SETS"
-            )
-            MetricCard(
-                modifier = Modifier.weight(1f),
-                label    = "VELOCIDAD",
-                value    = "${"%.2f".format(data.avgVelocityMs)}",
-                unit     = "m/s",
-                color    = if (!velocityAlert) NeonGreen else StatusDanger,
-                icon     = "VEL"
-            )
+            MetricCard(modifier = Modifier.weight(1f), label = "REPS", value = "${data.totalReps}", unit = "", color = SportGym, icon = "REPS")
+            MetricCard(modifier = Modifier.weight(1f), label = "SERIES", value = "${data.totalSets}", unit = "", color = NeonYellow, icon = "SETS")
+            MetricCard(modifier = Modifier.weight(1f), label = "VELOCIDAD", value = "${"%.2f".format(data.avgVelocityMs)}", unit = "m/s", color = if (!velocityAlert) NeonGreen else StatusDanger, icon = "VEL")
         }
 
         if (data.repsData.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
             GlassCard {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text     = "VELOCIDAD POR REP",
-                        fontSize = 10.sp,
-                        color    = TextTertiary,
-                        letterSpacing = 1.sp
-                    )
+                    Text(text = "VELOCIDAD POR REP", fontSize = 10.sp, color = TextTertiary, letterSpacing = 1.sp)
                     Spacer(modifier = Modifier.height(10.dp))
                     VelocitySparklineChart(reps = data.repsData)
                 }
@@ -1049,139 +833,35 @@ private fun GymBiomechanicsPanel(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  RPE DIALOG — Escala de Borg CR10 + Sparkline del pulso
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
-private fun RpeDialog(
-    selectedRpe: Int,
-    onRpeSelected: (Int) -> Unit,
-    hrSamples: List<Int>,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
+private fun RpeDialog(selectedRpe: Int, onRpeSelected: (Int) -> Unit, hrSamples: List<Int>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
-        onDismissRequest  = onDismiss,
-        containerColor    = SurfaceDark,
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
         titleContentColor = TextPrimary,
-        title = {
-            Column {
-                Text("Esfuerzo Percibido (RPE)", fontWeight = FontWeight.Bold)
-                Text(
-                    text  = "Escala CR10 de Borg",
-                    fontSize = 11.sp,
-                    color = TextTertiary
-                )
-            }
-        },
+        title = { Column { Text("Esfuerzo Percibido (RPE)", fontWeight = FontWeight.Bold); Text(text = "Escala CR10 de Borg", fontSize = 11.sp, color = TextTertiary) } },
         text = {
             Column {
-                // Sparkline del pulso de la sesión
                 if (hrSamples.size > 5) {
-                    Text(
-                        text     = "PULSO DE LA SESIÓN",
-                        fontSize = 9.sp,
-                        color    = TextTertiary,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
-                    HrSparkline(
-                        samples  = hrSamples,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(60.dp)
-                    )
+                    Text(text = "PULSO DE LA SESIÓN", fontSize = 9.sp, color = TextTertiary, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 6.dp))
+                    HrSparkline(samples = hrSamples, modifier = Modifier.fillMaxWidth().height(60.dp))
                     Spacer(modifier = Modifier.height(16.dp))
                 }
-
-                Text(
-                    text     = "¿Cómo fue el esfuerzo?",
-                    fontSize = 13.sp,
-                    color    = TextSecondary,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-
-                // RPE Slider 1-10
-                Slider(
-                    value             = selectedRpe.toFloat(),
-                    onValueChange     = { onRpeSelected(it.toInt()) },
-                    valueRange        = 1f..10f,
-                    steps             = 8,
-                    colors            = SliderDefaults.colors(
-                        thumbColor          = NeonRed,
-                        activeTrackColor    = NeonRed,
-                        inactiveTrackColor  = SurfaceElevated
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Muy fácil", fontSize = 9.sp, color = NeonGreen)
-                    Text(
-                        text       = "RPE $selectedRpe/10",
-                        fontSize   = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = NeonRed
-                    )
-                    Text("Máximo", fontSize = 9.sp, color = StatusDanger)
-                }
-
-                val rpeLabel = when (selectedRpe) {
-                    1, 2 -> "Muy ligero"
-                    3, 4 -> "Ligero"
-                    5, 6 -> "Moderado"
-                    7, 8 -> "Duro"
-                    9    -> "Muy duro"
-                    10   -> "Esfuerzo máximo"
-                    else -> ""
-                }
-                Text(
-                    text      = rpeLabel,
-                    fontSize  = 12.sp,
-                    color     = TextSecondary,
-                    modifier  = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    textAlign = TextAlign.Center
-                )
+                Text(text = "¿Cómo fue el esfuerzo?", fontSize = 13.sp, color = TextSecondary, modifier = Modifier.padding(bottom = 12.dp))
+                Slider(value = selectedRpe.toFloat(), onValueChange = { onRpeSelected(it.toInt()) }, valueRange = 1f..10f, steps = 8, colors = SliderDefaults.colors(thumbColor = NeonRed, activeTrackColor = NeonRed, inactiveTrackColor = SurfaceElevated))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Muy fácil", fontSize = 9.sp, color = NeonGreen); Text(text = "RPE $selectedRpe/10", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = NeonRed); Text("Máximo", fontSize = 9.sp, color = StatusDanger) }
+                val rpeLabel = when (selectedRpe) { 1, 2 -> "Muy ligero"; 3, 4 -> "Ligero"; 5, 6 -> "Moderado"; 7, 8 -> "Duro"; 9 -> "Muy duro"; 10 -> "Esfuerzo máximo"; else -> "" }
+                Text(text = rpeLabel, fontSize = 12.sp, color = TextSecondary, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), textAlign = TextAlign.Center)
             }
         },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                colors  = ButtonDefaults.buttonColors(containerColor = NeonRed)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CloudDone,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Guardar en Supabase")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Omitir", color = TextTertiary)
-            }
-        }
+        confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = NeonRed)) { Icon(imageVector = Icons.Default.CloudDone, contentDescription = null, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(6.dp)); Text("Guardar en Supabase") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Omitir", color = TextTertiary) } }
     )
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  HR SPARKLINE — Mini gráfico del pulso de sesión
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
-fun HrSparkline(
-    samples: List<Int>,
-    modifier: Modifier = Modifier
-) {
+fun HrSparkline(samples: List<Int>, modifier: Modifier = Modifier) {
     if (samples.size < 2) return
-
     val minHr = samples.minOrNull() ?: 0
     val maxHr = samples.maxOrNull() ?: 1
     val range = maxOf(maxHr - minHr, 1)
@@ -1199,152 +879,61 @@ fun HrSparkline(
             val norm = (hr - minHr).toFloat() / range.toFloat()
             val y = h - (norm * h * 0.85f) - h * 0.075f
 
-            if (i == 0) {
-                path.moveTo(x, y)
-                fillPath.moveTo(x, h)
-                fillPath.lineTo(x, y)
-            } else {
-                path.lineTo(x, y)
-                fillPath.lineTo(x, y)
-            }
+            if (i == 0) { path.moveTo(x, y); fillPath.moveTo(x, h); fillPath.lineTo(x, y) }
+            else { path.lineTo(x, y); fillPath.lineTo(x, y) }
         }
         fillPath.lineTo(w, h)
         fillPath.close()
 
-        // Fill con gradiente
-        drawPath(
-            path  = fillPath,
-            brush = Brush.verticalGradient(
-                colors = listOf(NeonRed.copy(alpha = 0.3f), Color.Transparent)
-            )
-        )
-        // Línea
-        drawPath(
-            path        = path,
-            color       = NeonRed,
-            style       = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-        )
+        drawPath(path = fillPath, brush = Brush.verticalGradient(listOf(NeonRed.copy(alpha = 0.3f), Color.Transparent)))
+        drawPath(path = path, color = NeonRed, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────
-//  VELOCITY SPARKLINE — Para reps de gimnasio
-// ─────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun VelocitySparklineChart(reps: List<GymRepData>) {
     if (reps.size < 2) return
-
     val maxV = reps.maxOfOrNull { it.meanVelocity }?.takeIf { it > 0f } ?: 1f
 
-    Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(50.dp)
-    ) {
+    Canvas(modifier = Modifier.fillMaxWidth().height(50.dp)) {
         val w = size.width
         val h = size.height
         val stepX = w / (reps.size - 1).toFloat()
 
-val path = Path()
-        reps.forEachIndexed { i: Int, rep: GymRepData ->
-            val x    = i * stepX
-            val norm = rep.meanVelocity / maxV
-            val y    = h - norm * h * 0.9f
-
-            if (i == 0) path.moveTo(x, y)
-            else        path.lineTo(x, y)
-        }
-
-        drawPath(
-            path  = path,
-            color = NeonGreen,
-            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-        )
-
-        reps.forEachIndexed { i: Int, rep: GymRepData ->
-            val x    = i * stepX
-            val norm = rep.meanVelocity / maxV
-            val y    = h - norm * h * 0.9f
-
-            if (i == 0) path.moveTo(x, y)
-            else        path.lineTo(x, y)
-        }
-
-        drawPath(
-            path  = path,
-            color = NeonGreen,
-            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-        )
-
-        // Puntos en cada rep
+        val path = Path()
         reps.forEachIndexed { i, rep ->
-            val x    = i * stepX
+            val x = i * stepX
             val norm = rep.meanVelocity / maxV
-            val y    = h - norm * h * 0.9f
-            val color = if (rep.velocityLossPct > 20f) StatusDanger else NeonGreen
+            val y = h - norm * h * 0.9f
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
 
+        drawPath(path = path, color = NeonGreen, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+
+        reps.forEachIndexed { i, rep ->
+            val x = i * stepX
+            val norm = rep.meanVelocity / maxV
+            val y = h - norm * h * 0.9f
+            val color = if (rep.velocityLossPct > 20f) StatusDanger else NeonGreen
             drawCircle(color = color, radius = 4.dp.toPx(), center = Offset(x, y))
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  REUSABLE METRIC COMPONENTS
-// ─────────────────────────────────────────────────────────────────────────
-
 @Composable
-private fun MetricCard(
-    modifier: Modifier = Modifier,
-    label: String,
-    value: String,
-    unit: String,
-    color: Color,
-    icon: String
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(SurfaceDark)
-            .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-            .padding(12.dp)
-    ) {
+private fun MetricCard(modifier: Modifier = Modifier, label: String, value: String, unit: String, color: Color, icon: String) {
+    Box(modifier = modifier.clip(RoundedCornerShape(12.dp)).background(SurfaceDark).border(1.dp, BorderSubtle, RoundedCornerShape(12.dp)).padding(12.dp)) {
         Column {
             Text(text = icon, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(4.dp))
-            AnimatedContent(
-                targetState = value,
-                transitionSpec = {
-                    slideInVertically { -it } + fadeIn() togetherWith
-                            slideOutVertically { it } + fadeOut()
-                },
-                label = "metric_$label"
-            ) { v ->
+            AnimatedContent(targetState = value, transitionSpec = { slideInVertically { -it } + fadeIn() togetherWith slideOutVertically { it } + fadeOut() }, label = "metric_$label") { v ->
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        text       = v,
-                        fontWeight = FontWeight.Black,
-                        fontSize   = 20.sp,
-                        color      = color
-                    )
-                    if (unit.isNotBlank()) {
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(
-                            text     = unit,
-                            fontSize = 9.sp,
-                            color    = TextTertiary,
-                            modifier = Modifier.padding(bottom = 2.dp)
-                        )
-                    }
+                    Text(text = v, fontWeight = FontWeight.Black, fontSize = 20.sp, color = color)
+                    if (unit.isNotBlank()) { Spacer(modifier = Modifier.width(2.dp)); Text(text = unit, fontSize = 9.sp, color = TextTertiary, modifier = Modifier.padding(bottom = 2.dp)) }
                 }
             }
             Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text      = label,
-                fontSize  = 8.sp,
-                color     = TextTertiary,
-                letterSpacing = 0.5.sp
-            )
+            Text(text = label, fontSize = 8.sp, color = TextTertiary, letterSpacing = 0.5.sp)
         }
     }
 }
@@ -1354,112 +943,39 @@ private fun SectionHeader(icon: String, title: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(text = icon, fontSize = 14.sp)
         Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text      = title,
-            fontSize  = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color     = color,
-            letterSpacing = 1.sp
-        )
+        Text(text = title, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = color, letterSpacing = 1.sp)
         Spacer(modifier = Modifier.width(8.dp))
-        HorizontalDivider(
-            modifier = Modifier.weight(1f),
-            color    = color.copy(alpha = 0.2f)
-        )
+        HorizontalDivider(modifier = Modifier.weight(1f), color = color.copy(alpha = 0.2f))
     }
 }
 
 @Composable
 private fun GForceBar(normalized: Float) {
-    val color = when {
-        normalized < 0.3f -> NeonGreen
-        normalized < 0.6f -> NeonYellow
-        else              -> StatusDanger
-    }
-    val animNorm by animateFloatAsState(
-        targetValue  = normalized,
-        animationSpec = tween(200),
-        label        = "gforce_bar"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(6.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(SurfaceElevated)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(animNorm)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(3.dp))
-                .background(
-                    brush = Brush.horizontalGradient(listOf(NeonGreen, color))
-                )
-        )
+    val color = when { normalized < 0.3f -> NeonGreen; normalized < 0.6f -> NeonYellow; else -> StatusDanger }
+    val animNorm by animateFloatAsState(targetValue = normalized, animationSpec = tween(200), label = "gforce_bar")
+    Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(SurfaceElevated)) {
+        Box(modifier = Modifier.fillMaxWidth(animNorm).fillMaxHeight().clip(RoundedCornerShape(3.dp)).background(brush = Brush.horizontalGradient(listOf(NeonGreen, color))))
     }
 }
 
 @Composable
 private fun AxisBar(value: Int, max: Int, color: Color) {
     val normalized = min(kotlin.math.abs(value).toFloat() / max.toFloat(), 1f)
-    val animNorm by animateFloatAsState(
-        targetValue  = normalized,
-        animationSpec = tween(100),
-        label        = "axis_bar"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(5.dp)
-            .clip(RoundedCornerShape(3.dp))
-            .background(SurfaceElevated)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(animNorm)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(3.dp))
-                .background(color)
-        )
+    val animNorm by animateFloatAsState(targetValue = normalized, animationSpec = tween(100), label = "axis_bar")
+    Box(modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(SurfaceElevated)) {
+        Box(modifier = Modifier.fillMaxWidth(animNorm).fillMaxHeight().clip(RoundedCornerShape(3.dp)).background(color))
     }
 }
 
 @Composable
-private fun LoadBar(
-    modifier: Modifier = Modifier,
-    label: String,
-    value: Float,
-    maxValue: Float,
-    color: Color
-) {
+private fun LoadBar(modifier: Modifier = Modifier, label: String, value: Float, maxValue: Float, color: Color) {
     val normalized = min(value / maxValue, 1f)
     Column(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(label, fontSize = 9.sp, color = TextTertiary)
-            Text("${"%.1f".format(value)}", fontSize = 9.sp, color = color)
-        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(label, fontSize = 9.sp, color = TextTertiary); Text("${"%.1f".format(value)}", fontSize = 9.sp, color = color) }
         Spacer(modifier = Modifier.height(4.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(SurfaceElevated)
-        ) {
+        Box(modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)).background(SurfaceElevated)) {
             val animNorm by animateFloatAsState(normalized, tween(400), label = "load_$label")
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(animNorm)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(color)
-            )
+            Box(modifier = Modifier.fillMaxWidth(animNorm).fillMaxHeight().clip(RoundedCornerShape(4.dp)).background(color))
         }
     }
 }

@@ -190,6 +190,7 @@ data class FutbolBiomechanics(
     @SerialName("mechanical_load_score") val mechanicalLoadScore: Float = 0f,
     @SerialName("cardiovascular_load_score") val cardiovascularLoadScore: Float = 0f,
     @SerialName("load_ratio") val loadRatio: Float = 0f,
+    @SerialName("flight_time_ms") val flightTimeMs: Long = 0L,
     @SerialName("impacts") val impacts: List<ImpactEvent> = emptyList()
 )
 
@@ -279,6 +280,7 @@ data class WorkoutState(
     val isActive: Boolean = false,
     val isPaused: Boolean = false,
     val elapsedSeconds: Long = 0L,
+    val startTime: Long = 0L,
     val selectedSport: SportType = SportType.FUTBOL,
     val telemetry: TelemetryState = TelemetryState(),
     val acc: AccelerometerState = AccelerometerState(),
@@ -289,7 +291,18 @@ data class WorkoutState(
     val isSaving: Boolean = false,
     val savedSuccessfully: Boolean = false,
     val syncState: SyncState = SyncState.Idle,
-    val duracion_segundos: Long = 0L
+    val duracion_segundos: Long = 0L,
+    val savedWorkoutSummary: WorkoutSummary? = null
+)
+
+data class WorkoutSummary(
+    val sportType: String,
+    val startTime: Long,
+    val endTime: Long,
+    val durationSeconds: Int,
+    val avgHr: Int,
+    val maxHr: Int,
+    val rpe: Int
 )
 
 // ─────────────────────────────────────────────────────────────────────────

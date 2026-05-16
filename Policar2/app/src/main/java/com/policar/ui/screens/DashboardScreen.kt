@@ -93,6 +93,7 @@ fun DashboardScreen(
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(100)
         showContent = true
+        viewModel.setUserId("demo_user")
         viewModel.calculateDashboardStats()
     }
 

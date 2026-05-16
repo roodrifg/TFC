@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.policar.data.model.ConnectionState
 import com.policar.data.model.DatosBiomecanicos
+import com.policar.data.model.Entrenamiento
 import com.policar.data.model.ExerciseRecordingData
 import com.policar.data.model.FutbolBiomechanics
 import com.policar.data.model.GymBiomechanics
@@ -15,6 +16,7 @@ import com.policar.data.model.SesionActiva
 import com.policar.data.model.SyncState
 import com.policar.data.model.TipoDeporte
 import com.policar.data.model.WorkoutState
+import com.policar.data.model.WorkoutSummary
 import com.policar.data.model.TelemetryState
 import com.policar.data.remote.SupabaseConfig
 import com.policar.sensor.PolarManagerProvider
@@ -95,20 +97,20 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun startWorkout(sport: TipoDeporte, deviceId: String) {
+        val startTime = System.currentTimeMillis()
         val state = SesionActiva(
-            fecha_inicio = System.currentTimeMillis(),
+            fecha_inicio = startTime,
             tipo_deporte = sport.name,
             deviceId = deviceId
         )
-        _uiState.update { it.copy(isActive = true, selectedSport = sport, deviceId = deviceId) }
+        _uiState.update { it.copy(isActive = true, selectedSport = sport, deviceId = deviceId, startTime = startTime) }
         polarManager.startStreaming(deviceId, sport)
         startTimer()
-        Log.d(TAG, "Entrenamiento iniciado: $sport")
+        Log.d(TAG, "Entrenamiento iniciado: $sport en ${startTime}")
     }
 
     fun stopWorkout() {
         timerJob?.cancel()
-        syncJob?.cancel()
         val deviceId = _uiState.value.deviceId
         if (deviceId.isNotEmpty()) {
             polarManager.stopStreaming()
@@ -131,90 +133,126 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
 
     fun saveWorkout(rpe: Int) {
         val state = _uiState.value
-        if (!state.isActive || state.deviceId.isEmpty()) return
-        executeSyncPipeline(rpe, state, state.deviceId)
+        if (state.deviceId.isEmpty()) return
+        
+        timerJob?.cancel()
+        val deviceId = state.deviceId
+        if (deviceId.isNotEmpty()) {
+            polarManager.stopStreaming()
+        }
+        _uiState.update { it.copy(isActive = false, isPaused = false, isSaving = true) }
+        executeSyncPipeline(rpe, state, deviceId)
     }
 
     private fun executeSyncPipeline(rpe: Int, state: WorkoutState, deviceId: String) {
         syncJob = viewModelScope.launch {
-            _uiState.update { it.copy(syncState = SyncState.Downloading) }
-            Log.d(TAG, "[Sync Paso 1/3] Descargando ejercicios del H10")
+            try {
+                _uiState.update { it.copy(syncState = SyncState.Downloading) }
+                Log.d(TAG, "[Sync Paso 1/3] Verificando ejercicios del H10")
 
-            val exercisesData: List<ExerciseRecordingData> = suspendCancellableCoroutine { cont ->
-                polarManager.fetchAllExercises(deviceId) { result ->
-                    cont.resume(result)
+                var exercisesData: List<ExerciseRecordingData> = emptyList()
+                try {
+                    exercisesData = suspendCancellableCoroutine { cont ->
+                        val timeoutJob = launch {
+                            delay(5_000L)
+                            cont.resume(emptyList())
+                        }
+                        polarManager.fetchAllExercises(deviceId) { result ->
+                            timeoutJob.cancel()
+                            cont.resume(result)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error al descargar ejercicios: ${e.message}")
                 }
-            }
 
-            Log.d(TAG, "[Sync Paso 1] ${exercisesData.size} ejercicios descargados")
+                Log.d(TAG, "[Sync Paso 1] ${exercisesData.size} ejercicios descargados")
 
-            if (exercisesData.isEmpty()) {
-                Log.w(TAG, "No hay ejercicios en el H10")
-                finishLiveWorkout(rpe, state, deviceId)
-                return@launch
-            }
+                if (exercisesData.isEmpty()) {
+                    Log.w(TAG, "No hay ejercicios en el H10, guardando modo EN_VIVO")
+                    finishLiveWorkout(rpe, state, deviceId)
+                    return@launch
+                }
 
-            val consolidatedData = consolidateExercises(exercisesData)
+                val consolidatedData = consolidateExercises(exercisesData)
 
-            _uiState.update { it.copy(syncState = SyncState.Uploading) }
-            Log.d(TAG, "[Sync Paso 2/3] Subiendo datos a Supabase")
+                _uiState.update { it.copy(syncState = SyncState.Uploading) }
+                Log.d(TAG, "[Sync Paso 2/3] Subiendo datos a Supabase")
 
-            val endTime = System.currentTimeMillis()
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-            val startTs = dateFormat.format(Date(System.currentTimeMillis()))
-            val endTs = dateFormat.format(Date(endTime))
+                val validRpe = rpe.coerceIn(0, 10)
+                val validDeviceId = deviceId.ifBlank { "H10_UNKNOWN" }
+                val sportType = normalizeSportType(state.selectedSport.name)
+                val hrSamples = if (heartRateHistory.isEmpty()) "0" else heartRateHistory.joinToString(",")
+                val bio = biomechanics.value
 
-            val validRpe = rpe.coerceIn(0, 10)
-            val validDeviceId = deviceId.ifBlank { "H10_UNKNOWN" }
-            val sportType = normalizeSportType(state.selectedSport.name)
-            val hrSamples = if (heartRateHistory.isEmpty()) "0" else heartRateHistory.joinToString(",")
-            val bio = biomechanics.value
+                val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+                val startTs = dateFormat.format(Date(state.startTime))
+                val endTs = dateFormat.format(Date(System.currentTimeMillis()))
+                val hrAvg = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toInt() else 0
+                val hrMax = heartRateHistory.maxOrNull() ?: 0
+                val hrMin = heartRateHistory.filter { it > 0 }.minOrNull() ?: 0
 
-            val bioJson = when (state.selectedSport) {
-                TipoDeporte.PADEL -> """{"smash_count":${bio.smash_count},"rotacion_tronco_x":${bio.rotacion_tronco_x},"rotacion_tronco_y":${bio.rotacion_tronco_y}}"""
-                TipoDeporte.FUTBOL -> """{"impacto_fuerza_g":${bio.impacto_fuerza_g},"carga_mecanica_g":${bio.carga_mecanica_g},"picos_g":${bio.picos_g_history.size}}"""
-                else -> """{"repeticiones":${bio.repeticiones},"velocidad_concentrica_promedio":${bio.velocidad_concentrica_promedio}}"""
-            }
+                Log.d(TAG, "Preparando datos para Supabase:")
+                Log.d(TAG, "  - device_id: $validDeviceId")
+                Log.d(TAG, "  - sport_type: $sportType")
+                Log.d(TAG, "  - start_timestamp: $startTs")
+                Log.d(TAG, "  - end_timestamp: $endTs")
+                Log.d(TAG, "  - duration_seconds: ${state.elapsedSeconds}")
 
-            try {
-                val data = mapOf(
-                    "user_id" to "demo_user",
-                    "device_id" to validDeviceId,
-                    "sport_type" to sportType,
-                    "start_time" to startTs,
-                    "end_time" to endTs,
-                    "duration_seconds" to state.elapsedSeconds.toString(),
-                    "avg_hr" to (if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toInt() else 0).toString(),
-                    "max_hr" to (heartRateHistory.maxOrNull() ?: 0).toString(),
-                    "min_hr" to (heartRateHistory.filter { it > 0 }.minOrNull() ?: 0).toString(),
-                    "hr_samples" to hrSamples,
-                    "rpe" to validRpe.toString(),
-                    "biomechanics" to bioJson,
-                    "recorded_samples" to consolidatedData.hrSamples.size.toString()
+                val bioJson = """{"carga_mecanica_g":${bio.carga_mecanica_g},"impacto_fuerza_g":${bio.impacto_fuerza_g},"rotacion_tronco_x":${bio.rotacion_tronco_x},"rotacion_tronco_y":${bio.rotacion_tronco_y},"repeticiones":${bio.repeticiones},"velocidad_concentrica_promedio":${bio.velocidad_concentrica_promedio}}"""
+
+                val entrenamiento = Entrenamiento(
+                    device_id = validDeviceId,
+                    sport_type = sportType,
+                    start_timestamp = startTs,
+                    end_timestamp = endTs,
+                    duration_seconds = state.elapsedSeconds.toInt(),
+                    hr_avg = hrAvg,
+                    hr_max = hrMax,
+                    hr_min = hrMin,
+                    hr_samples = hrSamples,
+                    rpe = validRpe,
+                    futbol_biomechanics = bioJson
                 )
-                supabaseClient.from("sessions").insert(data)
+                Log.d(TAG, "Insertando en Supabase tabla 'entrenamientos'...")
+                supabaseClient.from("entrenamientos").insert(entrenamiento)
                 Log.d(TAG, "[Sync Paso 2] Entrenamiento guardado en Supabase")
-                _uiState.update { it.copy(syncState = SyncState.Success, isSaving = false, savedSuccessfully = true) }
-            } catch (e: Exception) {
-                Log.e(TAG, "[Sync Paso 2] Error de upload: ${e.message}")
+
+                val summary = WorkoutSummary(
+                    sportType = sportType,
+                    startTime = state.startTime,
+                    endTime = state.startTime + (state.elapsedSeconds * 1000),
+                    durationSeconds = state.elapsedSeconds.toInt(),
+                    avgHr = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toInt() else 0,
+                    maxHr = heartRateHistory.maxOrNull() ?: 0,
+                    rpe = validRpe
+                )
                 _uiState.update { it.copy(
-                    syncState = SyncState.Error("Upload fallido: ${e.message}"),
-                    errorMessage = "No se pudo guardar el entrenamiento: ${e.message}"
-                )}
-                return@launch
-            }
+                    syncState = SyncState.Success,
+                    isSaving = false,
+                    savedSuccessfully = true,
+                    savedWorkoutSummary = summary
+                ) }
 
-            _uiState.update { it.copy(syncState = SyncState.Clearing) }
-            Log.d(TAG, "[Sync Paso 3/3] Limpiando memoria del H10")
+                _uiState.update { it.copy(syncState = SyncState.Clearing) }
+                Log.d(TAG, "[Sync Paso 3/3] Limpiando memoria del H10")
 
-            try {
-                polarManager.removeAllExercises(deviceId)
-                Log.d(TAG, "[Sync Paso 3] Memoria del H10 limpiada")
+                try {
+                    polarManager.removeAllExercises(deviceId)
+                    Log.d(TAG, "[Sync Paso 3] Memoria del H10 limpiada")
+                } catch (e: Exception) {
+                    Log.w(TAG, "[Sync Paso 3] Error al limpiar memoria (no critico): ${e.message}")
+                }
+
             } catch (e: Exception) {
-                Log.w(TAG, "[Sync Paso 3] Error al limpiar memoria (no critico): ${e.message}")
+                Log.e(TAG, "[Sync] Error general: ${e.message}")
+                Log.e(TAG, "[Sync] Stack: ${e.stackTraceToString()}")
+                _uiState.update { it.copy(
+                    syncState = SyncState.Error("Error: ${e.message}"),
+                    isSaving = false,
+                    errorMessage = "Error al guardar: ${e.message}"
+                ) }
             }
-
-            _uiState.update { it.copy(syncState = SyncState.Success, savedSuccessfully = true) }
         }
     }
 
@@ -222,42 +260,64 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
         Log.d(TAG, "[Fallback] Subiendo datos del stream HR en vivo")
         _uiState.update { it.copy(syncState = SyncState.Uploading) }
 
-        val endTime = System.currentTimeMillis()
-        val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-        val startTs = dateFormat.format(Date(System.currentTimeMillis()))
-        val endTs = dateFormat.format(Date(endTime))
-
         val validRpe = rpe.coerceIn(0, 10)
         val sportType = normalizeSportType(state.selectedSport.name)
         val hrSamples = if (heartRateHistory.isEmpty()) "0" else heartRateHistory.joinToString(",")
         val bio = biomechanics.value
 
-        val bioJson = when (state.selectedSport) {
-            TipoDeporte.PADEL -> """{"smash_count":${bio.smash_count}}"""
-            TipoDeporte.FUTBOL -> """{"impacto_fuerza_g":${bio.impacto_fuerza_g}}"""
-            else -> """{"repeticiones":${bio.repeticiones}}"""
-        }
-
         try {
-            val data = mapOf(
-                "user_id" to "demo_user",
-                "device_id" to deviceId.ifBlank { "H10_UNKNOWN" },
-                "sport_type" to sportType,
-                "start_time" to startTs,
-                "end_time" to endTs,
-                "duration_seconds" to state.elapsedSeconds.toString(),
-                "avg_hr" to (if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toInt() else 0).toString(),
-                "max_hr" to (heartRateHistory.maxOrNull() ?: 0).toString(),
-                "min_hr" to (heartRateHistory.filter { it > 0 }.minOrNull() ?: 0).toString(),
-                "hr_samples" to hrSamples,
-                "rpe" to validRpe.toString(),
-                "biomechanics" to bioJson,
-                "recorded_samples" to "0"
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+            val startTs = dateFormat.format(Date(state.startTime))
+            val endTs = dateFormat.format(Date(System.currentTimeMillis()))
+            val hrAvg = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toDouble() else 0.0
+            val hrMax = heartRateHistory.maxOrNull() ?: 0
+            val hrMin = heartRateHistory.filter { it > 0 }.minOrNull() ?: 0
+
+            Log.d(TAG, "[Fallback] Preparando datos: deviceId=${deviceId}, sport=$sportType, start=$startTs, duracion=${state.elapsedSeconds}")
+
+            val bioJson = """{"carga_mecanica_g":${bio.carga_mecanica_g},"impacto_fuerza_g":${bio.impacto_fuerza_g},"rotacion_tronco_x":${bio.rotacion_tronco_x},"rotacion_tronco_y":${bio.rotacion_tronco_y},"repeticiones":${bio.repeticiones},"velocidad_concentrica_promedio":${bio.velocidad_concentrica_promedio}}"""
+
+            val entrenamiento = Entrenamiento(
+                device_id = deviceId.ifBlank { "H10_UNKNOWN" },
+                sport_type = sportType,
+                start_timestamp = startTs,
+                end_timestamp = endTs,
+                duration_seconds = state.elapsedSeconds.toInt(),
+                hr_avg = hrAvg.toInt(),
+                hr_max = hrMax,
+                hr_min = hrMin,
+                hr_samples = hrSamples,
+                rpe = validRpe,
+                futbol_biomechanics = bioJson
             )
-            supabaseClient.from("sessions").insert(data)
-            _uiState.update { it.copy(syncState = SyncState.Success, savedSuccessfully = true) }
+            Log.d(TAG, "[Fallback] Insertando en Supabase...")
+            supabaseClient.from("entrenamientos").insert(entrenamiento)
+            Log.d(TAG, "[Fallback] Insertado exitosamente")
+
+            val summary = WorkoutSummary(
+                sportType = sportType,
+                startTime = state.startTime,
+                endTime = state.startTime + (state.elapsedSeconds * 1000),
+                durationSeconds = state.elapsedSeconds.toInt(),
+                avgHr = if (heartRateHistory.isNotEmpty()) heartRateHistory.average().toInt() else 0,
+                maxHr = heartRateHistory.maxOrNull() ?: 0,
+                rpe = validRpe
+            )
+            _uiState.update { it.copy(
+                syncState = SyncState.Success,
+                isSaving = false,
+                savedSuccessfully = true,
+                savedWorkoutSummary = summary
+            ) }
+            Log.d(TAG, "[Fallback] UI actualizada - savedSuccessfully=true")
         } catch (e: Exception) {
-            _uiState.update { it.copy(syncState = SyncState.Error("Fallback fallido: ${e.message}")) }
+            Log.e(TAG, "[Fallback] Error al guardar: ${e.message}")
+            Log.e(TAG, "[Fallback] Stack: ${e.stackTraceToString()}")
+            _uiState.update { it.copy(
+                syncState = SyncState.Error("Fallback fallido: ${e.message}"),
+                isSaving = false,
+                errorMessage = "Error al guardar: ${e.message}"
+            ) }
         }
     }
 
@@ -312,6 +372,25 @@ class WorkoutViewModel(application: Application) : AndroidViewModel(application)
 
     fun resetSyncState() {
         _uiState.update { it.copy(syncState = SyncState.Idle) }
+    }
+
+    fun resetWorkout() {
+        timerJob?.cancel()
+        syncJob?.cancel()
+        heartRateHistory.clear()
+        _uiState.update {
+            it.copy(
+                isActive = false,
+                isPaused = false,
+                elapsedSeconds = 0L,
+                startTime = 0L,
+                isSaving = false,
+                savedSuccessfully = false,
+                syncState = SyncState.Idle,
+                savedWorkoutSummary = null,
+                errorMessage = null
+            )
+        }
     }
 
     override fun onCleared() {

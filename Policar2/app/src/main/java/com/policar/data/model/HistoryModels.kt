@@ -11,22 +11,25 @@ enum class ViewPeriod(val label: String, val days: Int) {
 
 @Serializable
 data class TrainingSession(
-    @SerialName("id") val id: Long = 0,
-    @SerialName("user_id") val userId: String = "",
+    @SerialName("id") val id: String = "",
+    @SerialName("usuario_id") val userId: String = "",
     @SerialName("device_id") val deviceId: String = "",
-    @SerialName("sport_type") val sportType: String = "",
-    @SerialName("start_timestamp") val startTimestamp: String = "",
-    @SerialName("end_timestamp") val endTimestamp: String = "",
-    @SerialName("duration_seconds") val durationSeconds: Int = 0,
-    @SerialName("hr_avg") val hrAvg: Int = 0,
-    @SerialName("hr_max") val hrMax: Int = 0,
-    @SerialName("hr_min") val hrMin: Int = 0,
+    @SerialName("tipo_deporte") val sportType: String = "",
+    @SerialName("modo_grabacion") val recordingMode: String = "EN_VIVO",
+    @SerialName("fecha_inicio") val startTimestamp: Long = 0L,
+    @SerialName("fecha_fin") val endTimestamp: Long = 0L,
+    @SerialName("duracion_segundos") val durationSeconds: Int = 0,
+    @SerialName("frecuencia_cardiaca_promedio") val hrAvg: Int = 0,
+    @SerialName("frecuencia_cardiaca_max") val hrMax: Int = 0,
+    @SerialName("frecuencia_cardiaca_min") val hrMin: Int = 0,
     @SerialName("rpe") val rpe: Int = 0,
-    @SerialName("hr_samples") val hrSamples: String = "",
-    @SerialName("futbol_biomechanics") val futbolBiomechanics: String = "",
-    @SerialName("padel_biomechanics") val padelBiomechanics: String = "",
-    @SerialName("gym_biomechanics") val gymBiomechanics: String = "",
-    @SerialName("notes") val notes: String = ""
+    @SerialName("sparkline") val hrSamples: String = "",
+    @SerialName("carga_mecanica_g") val mechanicalLoad: Double = 0.0,
+    @SerialName("impacto_fuerza_g") val impactForceG: Double = 0.0,
+    @SerialName("rotacion_tronco_x") val trunkRotationX: Double = 0.0,
+    @SerialName("rotacion_tronco_y") val trunkRotationY: Double = 0.0,
+    @SerialName("repeticiones") val reps: Int = 0,
+    @SerialName("velocidad_concentrica_promedio") val avgConcentricVelocity: Double = 0.0
 )
 
 data class CalendarDay(
